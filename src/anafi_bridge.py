@@ -117,6 +117,7 @@ class Anafi(threading.Thread):
 			self.pub_state.publish("CONNECTING")
 			connection = self.drone.connect()
 			if connection:
+				print('CONNECTED')
 				break
 			if rospy.is_shutdown():
 				exit()
@@ -237,25 +238,26 @@ class Anafi(threading.Thread):
 		metadata = yuv_frame.vmeta()
 		rospy.logdebug_throttle(10, "yuv_frame.vmeta = " + str(metadata))
 
-		self.pretty(metadata[1])
+		# self.pretty(info)
+		# self.pretty(metadata[1])
 				
 		if metadata[1] != None:
 			header = Header()
 			header.stamp = rospy.Time.now()
 			header.frame_id = '/body'
 		
-			frame_timestamp = metadata[1]['frame_timestamp'] # timestamp [millisec]
+			frame_timestamp = info['raw']['frame']['timestamp'] # timestamp [millisec]
 			msg_time = Time()
 			msg_time.data = frame_timestamp # secs = int(frame_timestamp//1e6), nsecs = int(frame_timestamp%1e6*1e3)
 			self.pub_time.publish(msg_time)
 
-			drone_quat = metadata[1]['drone_quat'] # attitude
+			drone_quat = metadata[1]['drone']['quat'] # attitude
 			msg_attitude = QuaternionStamped()
 			msg_attitude.header = header
 			msg_attitude.quaternion = Quaternion(drone_quat['x'], -drone_quat['y'], -drone_quat['z'], drone_quat['w'])
 			self.pub_attitude.publish(msg_attitude)
 					
-			location = metadata[1]['location'] # GPS location [500.0=not available] (decimal deg)
+			location = metadata[1]['drone']['location'] # GPS location [500.0=not available] (decimal deg)
 			msg_location = PointStamped()
 			if location != {}:			
 				msg_location.header = header
@@ -265,10 +267,10 @@ class Anafi(threading.Thread):
 				msg_location.point.z = location['altitude']
 				self.pub_location.publish(msg_location)
 				
-			ground_distance = metadata[1]['ground_distance'] # barometer (m)
+			ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
 			self.pub_height.publish(ground_distance)
 
-			speed = metadata[1]['speed'] # opticalflow speed (m/s)
+			speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
 			msg_speed = Vector3Stamped()
 			msg_speed.header = header
 			msg_speed.header.frame_id = '/world'
@@ -277,26 +279,26 @@ class Anafi(threading.Thread):
 			msg_speed.vector.z = -speed['down']
 			self.pub_speed.publish(msg_speed)
 
-			air_speed = metadata[1]['air_speed'] # air speed [-1=no data, > 0] (m/s)
-			self.pub_air_speed.publish(air_speed)
+			# air_speed = metadata[1]['air_speed'] # air speed [-1=no data, > 0] (m/s)
+			# self.pub_air_speed.publish(air_speed)
 
-			link_goodput = metadata[1]['link_goodput'] # throughput of the connection (b/s)
+			link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
 			self.pub_link_goodput.publish(link_goodput)
 
-			link_quality = metadata[1]['link_quality'] # [0=bad, 5=good]
+			link_quality = metadata[1]['links'][0]['wifi']['quality'] # [0=bad, 5=good]
 			self.pub_link_quality.publish(link_quality)
 
-			wifi_rssi = metadata[1]['wifi_rssi'] # signal strength [-100=bad, 0=good] (dBm)
+			wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
 			self.pub_wifi_rssi.publish(wifi_rssi)
 
-			battery_percentage = metadata[1]['battery_percentage'] # [0=empty, 100=full]
+			battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
 			self.pub_battery.publish(battery_percentage)
 
-			state = metadata[1]['state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
+			state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
 			self.pub_state.publish(state)
 
-			mode = metadata[1]['mode'] # ['MANUAL', 'RETURN_HOME', 'FLIGHT_PLAN', 'TRACKING', 'FOLLOW_ME', 'MOVE_TO']
-			self.pub_mode.publish(mode)
+			# mode = metadata[1]['mode'] # ['MANUAL', 'RETURN_HOME', 'FLIGHT_PLAN', 'TRACKING', 'FOLLOW_ME', 'MOVE_TO']
+			# self.pub_mode.publish(mode)
 			
 			msg_pose = PoseStamped()
 			msg_pose.header = header
