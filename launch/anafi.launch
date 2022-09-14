@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 
 <launch>
-	<arg name="indoor" default="true"/>
-	<arg name="skycontroller" default="true"/>
+	<arg name="indoor" default="false"/>
+	<arg name="skycontroller" default="false"/>
 
 	<param name="indoor" type="boolean" value="$(arg indoor)" />
 	<param name="skycontroller" type="boolean" value="$(arg skycontroller)" />

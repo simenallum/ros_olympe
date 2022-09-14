@@ -49,8 +49,10 @@ from olympe_bridge.msg import PilotingCommand, CameraCommand, MoveByCommand, Mov
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
-DRONE_IP = "192.168.42.1"
+#DRONE_IP = "192.168.42.1"
+DRONE_IP = "10.202.0.1"
 SKYCTRL_IP = "192.168.53.1"
+DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT")
 
 class Anafi(threading.Thread):
 	def __init__(self):	
@@ -114,18 +116,14 @@ class Anafi(threading.Thread):
 		while True:
 			self.pub_state.publish("CONNECTING")
 			connection = self.drone.connect()
-			if getattr(connection, 'OK') == True:
+			if connection:
 				break
 			if rospy.is_shutdown():
 				exit()
 			rate.sleep()
 		
-		# Connect to the SkyController	
-		if rospy.get_param("/skycontroller"):
-			self.pub_state.publish("CONNECTED_SKYCONTROLLER")
-			rospy.loginfo("Connection to SkyController: " + getattr(connection, 'message'))
-			self.switch_manual()
-					
+		# Connect t
+        #     self.drone.streaming.server_addr = f"{DRONE_IP}:{DRONE_RTSP_PORT}"oginfo("Connection to SkyController: " + str(connecDRONE_IP))
 			# Connect to the drone
 			while True:
 				if self.drone(connection_state(state="connected", _policy="check")):
@@ -141,18 +139,21 @@ class Anafi(threading.Thread):
 		# Connect to the Anafi
 		else:
 			self.pub_state.publish("CONNECTED_DRONE")
-			rospy.loginfo("Connection to Anafi: " + getattr(connection, 'message'))
+			rospy.loginfo("Connection to Anafi: " + str(connection))
 			self.switch_offboard()
 			
 		self.frame_queue = queue.Queue()
 		self.flush_queue_lock = threading.Lock()
 
+		if DRONE_RTSP_PORT is not None:
+			self.drone.streaming.server_addr = f"{DRONE_IP}:{DRONE_RTSP_PORT}"
+
 		# Setup the callback functions to do some live video processing
-		self.drone.set_streaming_callbacks(
+		self.drone.streaming.set_callbacks(
 			raw_cb=self.yuv_frame_cb,
 			flush_raw_cb=self.flush_cb
 		)
-		self.drone.start_video_streaming()		
+		self.drone.streaming.start()
 		
 	def disconnect(self):
 		self.pub_state.publish("DISCONNECTING")
@@ -435,8 +436,8 @@ class Anafi(threading.Thread):
 		
 		while not rospy.is_shutdown():
 			connection = self.drone.connection_state()
-			if getattr(connection, 'OK') == False:
-				rospy.logfatal(getattr(connection, 'message'))
+			if connection == False:
+				rospy.logfatal(str(connection))
 				self.disconnect()
 				self.connect()
 			
@@ -517,10 +518,7 @@ class EveryEventListener(olympe.EventListener):
 		if event.args["axis"] == 1: # z
 			self.msg_rpyt.z = event.args["value"]
 		if event.args["axis"] == 2: # y/pitch
-			self.msg_rpyt.y = event.args["value"]
-		if event.args["axis"] == 3: # x/roll
-			self.msg_rpyt.x = event.args["value"]
-			
+			self.msg_rpyt.y = event.argtrue
 		self.msg_rpyt.header.stamp = rospy.Time.now()
 		self.msg_rpyt.header.frame_id = '/body'
 		self.anafi.pub_skycontroller.publish(self.msg_rpyt)
