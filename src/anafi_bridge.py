@@ -52,7 +52,7 @@ olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 #DRONE_IP = "192.168.42.1"
 DRONE_IP = "10.202.0.1"
 SKYCTRL_IP = "192.168.53.1"
-DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT")
+DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 class Anafi(threading.Thread):
 	def __init__(self):	
@@ -122,29 +122,29 @@ class Anafi(threading.Thread):
 				exit()
 			rate.sleep()
 		
-		# Connect to the SkyController	
-		if rospy.get_param("/skycontroller"):
-			self.pub_state.publish("CONNECTED_SKYCONTROLLER")
-			rospy.loginfo("Connection to SkyController: " + getattr(connection, 'message'))
-			self.switch_manual()
+		# # Connect to the SkyController	
+		# if rospy.get_param("/skycontroller"):
+		# 	self.pub_state.publish("CONNECTED_SKYCONTROLLER")
+		# 	rospy.loginfo("Connection to SkyController: " + getattr(connection, 'message'))
+		# 	self.switch_manual()
 					
-			# Connect to the drone
-			while True:
-				if self.drone(connection_state(state="connected", _policy="check")):
-					break				
-				if rospy.is_shutdown():
-					exit()
-				else:
-					self.pub_state.publish("SERCHING_DRONE")
-					rospy.loginfo_once("Connection to Anafi: " + str(self.drone.get_state(connection_state)["state"]))
-				rate.sleep()
-			self.pub_state.publish("CONNECTED_DRONE")			
-			rospy.loginfo("Connection to Anafi: " + str(self.drone.get_state(connection_state)["state"]))
-		# Connect to the Anafi
-		else:
-			self.pub_state.publish("CONNECTED_DRONE")
-			rospy.loginfo("Connection to Anafi: " + str(connection))
-			self.switch_offboard()
+		# 	# Connect to the drone
+		# 	while True:
+		# 		if self.drone(connection_state(state="connected", _policy="check")):
+		# 			break				
+		# 		if rospy.is_shutdown():
+		# 			exit()
+		# 		else:
+		# 			self.pub_state.publish("SERCHING_DRONE")
+		# 			rospy.loginfo_once("Connection to Anafi: " + str(self.drone.get_state(connection_state)["state"]))
+		# 		rate.sleep()
+		# 	self.pub_state.publish("CONNECTED_DRONE")			
+		# 	rospy.loginfo("Connection to Anafi: " + str(self.drone.get_state(connection_state)["state"]))
+		# # Connect to the Anafi
+		# else:
+		# 	self.pub_state.publish("CONNECTED_DRONE")
+		# 	rospy.loginfo("Connection to Anafi: " + str(connection))
+		# 	self.switch_offboard()
 			
 		self.frame_queue = queue.Queue()
 		self.flush_queue_lock = threading.Lock()
@@ -206,13 +206,28 @@ class Anafi(threading.Thread):
 
 	def yuv_callback(self, yuv_frame):
 		# Use OpenCV to convert the yuv frame to RGB
-		info = yuv_frame.info() # the VideoFrame.info() dictionary contains some useful information such as the video resolution
-		rospy.logdebug_throttle(10, "yuv_frame.info = " + str(info))
+		# the VideoFrame.info() dictionary contains some useful information
+		# such as the video resolution
+		info = yuv_frame.info()
+		height, width = (  # noqa
+			info["raw"]["frame"]["info"]["height"],
+			info["raw"]["frame"]["info"]["width"],
+		)
+
+		# yuv_frame.vmeta() returns a dictionary that contains additional
+		# metadata from the drone (GPS coordinates, battery percentage, ...)
+
+		# convert pdraw YUV flag to OpenCV YUV flag
 		cv2_cvt_color_flag = {
-			olympe.PDRAW_YUV_FORMAT_I420: cv2.COLOR_YUV2BGR_I420,
-			olympe.PDRAW_YUV_FORMAT_NV12: cv2.COLOR_YUV2BGR_NV12,
-		}[info["yuv"]["format"]] # convert pdraw YUV flag to OpenCV YUV flag
-		cv2frame = cv2.cvtColor(yuv_frame.as_ndarray(), cv2_cvt_color_flag)
+			olympe.VDEF_I420: cv2.COLOR_YUV2BGR_I420,
+			olympe.VDEF_NV12: cv2.COLOR_YUV2BGR_NV12,
+		}[yuv_frame.format()]
+
+		# yuv_frame.as_ndarray() is a 2D numpy array with the proper "shape"
+		# i.e (3 * height / 2, width) because it's a YUV I420 or NV12 frame
+
+		# Use OpenCV to convert the yuv frame to RGB
+		cv2frame = cv2.cvtColor(yuv_frame.as_ndarray(), cv2_cvt_color_flag)  # noqa
 		
 		# Publish image
 		msg_image = self.bridge.cv2_to_imgmsg(cv2frame, "bgr8")
@@ -221,6 +236,8 @@ class Anafi(threading.Thread):
 		# yuv_frame.vmeta() returns a dictionary that contains additional metadata from the drone (GPS coordinates, battery percentage, ...)
 		metadata = yuv_frame.vmeta()
 		rospy.logdebug_throttle(10, "yuv_frame.vmeta = " + str(metadata))
+
+		self.pretty(metadata[1])
 				
 		if metadata[1] != None:
 			header = Header()
@@ -327,6 +344,15 @@ class Anafi(threading.Thread):
 							rospy.logfatal_throttle(0.1, "Unusable signal: " + str(wifi_rssi) + "dBm")
 		else:
 			rospy.logwarn("Packet lost!")
+
+	def pretty(self, d, indent=0):
+		for key, value in d.items():
+			print('\t' * indent + str(key))
+			if isinstance(value, dict):
+				self.pretty(value, indent+1)
+			else:
+				print('\t' * (indent+1) + str(value))
+
 		
 	def takeoff_callback(self, msg):		
 		self.drone(TakeOff() >> FlyingStateChanged(state="hovering", _timeout=10)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
