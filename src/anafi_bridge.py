@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 
+from cmath import nan
 import rospy
-import csv
 import cv2
 import math
 import os
 import queue
-import shlex
-import subprocess
-import tempfile
 import threading
 import traceback
-import time
-import logging
-import roslib
-import sys
 import math
 import olympe
 
@@ -25,7 +18,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
 from olympe.messages.drone_manager import connection_state
-from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy
+from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy, moveTo
 from olympe.messages.ardrone3.PilotingState import FlyingStateChanged, PositionChanged, SpeedChanged, AttitudeChanged, AltitudeChanged, GpsLocationChanged
 from olympe.messages.ardrone3.PilotingSettings import MaxTilt, MaxDistance, MaxAltitude, NoFlyOverMaxDistance, BankedTurn
 from olympe.messages.ardrone3.PilotingSettingsState import MaxTiltChanged, MaxDistanceChanged, MaxAltitudeChanged, NoFlyOverMaxDistanceChanged, BankedTurnChanged
@@ -90,11 +83,11 @@ class Anafi(threading.Thread):
     
     # Connect to the SkyController	
     if rospy.get_param("/skycontroller"):
-      rospy.loginfo("Connecting through SkyController");
+      rospy.loginfo("Connecting through SkyController")
       self.drone = olympe.Drone(SKYCTRL_IP)
     # Connect to the Anafi
     else:
-      rospy.loginfo("Connecting directly to Anafi");
+      rospy.loginfo("Connecting directly to Anafi")
       self.drone = olympe.Drone(DRONE_IP)
     
     # Create listener for RC events
@@ -246,11 +239,14 @@ class Anafi(threading.Thread):
       header.stamp = rospy.Time.now()
       header.frame_id = '/body'
     
-      frame_timestamp = info['raw']['frame']['timestamp'] # timestamp [millisec]
+      frame_timestamp = info['raw']['frame']['timestamp'] # timestamp [millisec] (us?)
+      secs = int(frame_timestamp // 1e6)
+      microsecs = (frame_timestamp - (1e6 * secs))
+      nanosecs = microsecs * 1e3
       msg_time = Time()
-      msg_time.data = frame_timestamp # secs = int(frame_timestamp//1e6), nsecs = int(frame_timestamp%1e6*1e3)
+      msg_time.data = rospy.Time(secs, nanosecs) # secs = int(frame_timestamp//1e6), nsecs = int(frame_timestamp%1e6*1e3)
       self.pub_time.publish(msg_time)
-
+      
       drone_quat = metadata[1]['drone']['quat'] # attitude
       msg_attitude = QuaternionStamped()
       msg_attitude.header = header
