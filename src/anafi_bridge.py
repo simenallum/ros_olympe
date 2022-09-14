@@ -122,8 +122,12 @@ class Anafi(threading.Thread):
 				exit()
 			rate.sleep()
 		
-		# Connect t
-        #     self.drone.streaming.server_addr = f"{DRONE_IP}:{DRONE_RTSP_PORT}"oginfo("Connection to SkyController: " + str(connecDRONE_IP))
+		# Connect to the SkyController	
+		if rospy.get_param("/skycontroller"):
+			self.pub_state.publish("CONNECTED_SKYCONTROLLER")
+			rospy.loginfo("Connection to SkyController: " + getattr(connection, 'message'))
+			self.switch_manual()
+					
 			# Connect to the drone
 			while True:
 				if self.drone(connection_state(state="connected", _policy="check")):
