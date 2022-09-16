@@ -49,17 +49,16 @@ from olympe_bridge.msg import PilotingCommand, CameraCommand, MoveByCommand, Mov
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
-#DRONE_IP = "192.168.42.1"
-DRONE_IP = "10.202.0.1"
-SKYCTRL_IP = "192.168.53.1"
 DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 class Anafi(threading.Thread):
 	def __init__(self):	
-		if rospy.get_param("/indoor"):			
+		if rospy.get_param("/indoor"):
+			self.is_outdoor = False			
 			rospy.loginfo("We are indoor")
 		else:
 			rospy.loginfo("We are outdoor")
+			self.is_outdoor = True
 					
 		self.pub_image = rospy.Publisher("/anafi/image", Image, queue_size=1)
 		self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
@@ -88,14 +87,9 @@ class Anafi(threading.Thread):
 		rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
 		rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
 		
-		# Connect to the SkyController	
-		if rospy.get_param("/skycontroller"):
-			rospy.loginfo("Connecting through SkyController");
-			self.drone = olympe.Drone(SKYCTRL_IP)
-		# Connect to the Anafi
-		else:
-			rospy.loginfo("Connecting directly to Anafi");
-			self.drone = olympe.Drone(DRONE_IP)
+		# set IP adress for drone to connect to
+		self.drone_ip = rospy.get_param("/drone_ip")
+		self.drone = olympe.Drone(self.drone_ip)
 		
 		# Create listener for RC events
 		self.every_event_listener = EveryEventListener(self)
@@ -151,19 +145,44 @@ class Anafi(threading.Thread):
 		self.flush_queue_lock = threading.Lock()
 
 		if DRONE_RTSP_PORT is not None:
-			self.drone.streaming.server_addr = f"{DRONE_IP}:{DRONE_RTSP_PORT}"
+			self.drone.streaming.server_addr = f"{self.drone_ip}:{DRONE_RTSP_PORT}"
 
 		# Setup the callback functions to do some live video processing
 		self.drone.streaming.set_callbacks(
 			raw_cb=self.yuv_frame_cb,
 			flush_raw_cb=self.flush_cb
 		)
+
+		self.init_camera_angel(camera_angel=-90)
 		self.drone.streaming.start()
+
+	# TODO: Instead do this from the perception module over topic
+	def init_camera_angel(self, camera_angel):
+		# Init gimbal
+		max_speed = 180 # Max speeds: Pitch 180, Roll/Yaw 0.
+
+		self.drone(olympe.messages.gimbal.set_max_speed(
+			gimbal_id=0,
+			yaw=0,
+			pitch=max_speed,
+			roll=0,
+		))
+
+		self.drone(olympe.messages.gimbal.set_target(
+			gimbal_id=0,
+			control_mode="position",
+			roll_frame_of_reference="relative",
+			roll=0,
+			pitch_frame_of_reference="relative",
+			pitch=camera_angel,
+			yaw_frame_of_reference="relative",
+			yaw=0
+		))
 		
 	def disconnect(self):
 		self.pub_state.publish("DISCONNECTING")
 		self.every_event_listener.unsubscribe()
-		#self.drone.stop_video_streaming()
+		self.drone.streaming.stop()
 		self.drone.disconnect()
 		self.pub_state.publish("DISCONNECTED")
 		
@@ -257,15 +276,16 @@ class Anafi(threading.Thread):
 			msg_attitude.quaternion = Quaternion(drone_quat['x'], -drone_quat['y'], -drone_quat['z'], drone_quat['w'])
 			self.pub_attitude.publish(msg_attitude)
 					
-			location = metadata[1]['drone']['location'] # GPS location [500.0=not available] (decimal deg)
-			msg_location = PointStamped()
-			if location != {}:			
-				msg_location.header = header
-				msg_location.header.frame_id = '/world'
-				msg_location.point.x = location['latitude']
-				msg_location.point.y = location['longitude']
-				msg_location.point.z = location['altitude']
-				self.pub_location.publish(msg_location)
+			if "location" in metadata[1]['drone']:
+				location = metadata[1]['drone']['location'] # GPS location [500.0=not available] (decimal deg)
+				msg_location = PointStamped()
+				if location != {}:			
+					msg_location.header = header
+					msg_location.header.frame_id = '/world'
+					msg_location.point.x = location['latitude']
+					msg_location.point.y = location['longitude']
+					msg_location.point.z = location['altitude']
+					self.pub_location.publish(msg_location)
 				
 			ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
 			self.pub_height.publish(ground_distance)
@@ -302,7 +322,7 @@ class Anafi(threading.Thread):
 			
 			msg_pose = PoseStamped()
 			msg_pose.header = header
-			msg_pose.pose.position = msg_location.point
+			# msg_pose.pose.position = msg_location.point
 			msg_pose.pose.position.z = ground_distance
 			msg_pose.pose.orientation = msg_attitude.quaternion
 			self.pub_pose.publish(msg_pose)
@@ -403,7 +423,6 @@ class Anafi(threading.Thread):
 			orientation_mode=HEADING_START # orientation mode {TO_TARGET, HEADING_START, HEADING_DURING}
 			) >> FlyingStateChanged(state="hovering", _timeout=5)
 		).wait().success()
-
 	def camera_callback(self, msg):
 		if msg.action & 0b001: # take picture
 			self.drone(camera.take_photo(cam_id=0)) # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
@@ -540,8 +559,8 @@ class EveryEventListener(olympe.EventListener):
 				self.anafi.switch_offboard()
 				self.msg_rpyt = SkyControllerCommand()
 				return
-        
-      	# RC axis listener
+		
+	# RC axis listener
 	@olympe.listen_event(mapper.grab_axis_event()) # https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_axis_event
 	def on_grab_axis_event(self, event, scheduler):	
 		# axis: 	0 = yaw, 1 = z, 2 = y, 3 = x, 4 = camera, 5 = zoom
@@ -553,9 +572,9 @@ class EveryEventListener(olympe.EventListener):
 			self.msg_rpyt.y = event.argtrue
 		self.msg_rpyt.header.stamp = rospy.Time.now()
 		self.msg_rpyt.header.frame_id = '/body'
-		self.anafi.pub_skycontroller.publish(self.msg_rpyt)
-		          
-      	# All other events
+		self.anafi.pub_skycontroller.publish(self.msg_rpyt)	
+			  
+	# All other events
 	@olympe.listen_event()
 	def default(self, event, scheduler):
 		#self.print_event(event)
