@@ -43,9 +43,6 @@ from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, Mov
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
-#DRONE_IP = "192.168.42.1"
-DRONE_IP = "10.202.0.1"
-SKYCTRL_IP = "192.168.53.1"
 DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 
@@ -155,7 +152,31 @@ class Anafi(threading.Thread):
       raw_cb=self.yuv_frame_cb,
       flush_raw_cb=self.flush_cb
     )
-    self.drone.streaming.start()
+    self.init_camera_angle(camera_angel=-90)
+		self.drone.streaming.start()
+
+	# TODO: Instead do this from the perception module over topic
+	def init_camera_angle(self, camera_angel):
+		# Init gimbal
+		max_speed = 180 # Max speeds: Pitch 180, Roll/Yaw 0.
+
+		self.drone(olympe.messages.gimbal.set_max_speed(
+			gimbal_id=0,
+			yaw=0,
+			pitch=max_speed,
+			roll=0,
+		))
+
+		self.drone(olympe.messages.gimbal.set_target(
+			gimbal_id=0,
+			control_mode="position",
+			roll_frame_of_reference="relative",
+			roll=0,
+			pitch_frame_of_reference="relative",
+			pitch=camera_angel,
+			yaw_frame_of_reference="relative",
+			yaw=0
+		))
     
 
   def disconnect(self):

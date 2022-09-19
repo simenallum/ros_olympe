@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+
+<launch>
+    <arg name="indoor" default="false"/>
+    <param name="indoor" type="boolean" value="$(arg indoor)" />
+
+	<param name="drone_ip" type="string" value="10.202.0.1" />
+
+	<node name="anafi_bridge" pkg="olympe_bridge" type="anafi_bridge.py" output="screen"/>
+</launch>
