@@ -153,11 +153,11 @@ class Anafi(threading.Thread):
 			flush_raw_cb=self.flush_cb
 		)
 
-		self.init_camera_angel(camera_angel=-90)
+		self.init_camera_angle(camera_angel=-90)
 		self.drone.streaming.start()
 
 	# TODO: Instead do this from the perception module over topic
-	def init_camera_angel(self, camera_angel):
+	def init_camera_angle(self, camera_angel):
 		# Init gimbal
 		max_speed = 180 # Max speeds: Pitch 180, Roll/Yaw 0.
 
@@ -573,7 +573,7 @@ class EveryEventListener(olympe.EventListener):
 		self.msg_rpyt.header.stamp = rospy.Time.now()
 		self.msg_rpyt.header.frame_id = '/body'
 		self.anafi.pub_skycontroller.publish(self.msg_rpyt)	
-			  
+
 	# All other events
 	@olympe.listen_event()
 	def default(self, event, scheduler):
