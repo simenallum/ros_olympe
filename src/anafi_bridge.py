@@ -81,14 +81,8 @@ class Anafi(threading.Thread):
     rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
     rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
     
-    # Connect to the SkyController	
-    if rospy.get_param("/skycontroller"):
-      rospy.loginfo("Connecting through SkyController")
-      self.drone = olympe.Drone(SKYCTRL_IP)
-    # Connect to the Anafi
-    else:
-      rospy.loginfo("Connecting directly to Anafi")
-      self.drone = olympe.Drone(DRONE_IP)
+    # Connect 
+    self.drone = olympe.Drone(rospy.get_param("drone_ip"))
     
     # Create listener for RC events
     self.every_event_listener = EveryEventListener(self)
@@ -96,9 +90,9 @@ class Anafi(threading.Thread):
     rospy.on_shutdown(self.stop)
     
     self.srv = Server(setAnafiConfig, self.reconfigure_callback)
-						
+
     self.connect()
-        
+    
     # To convert OpenCV images to ROS images
     self.bridge = CvBridge()
     
@@ -145,7 +139,7 @@ class Anafi(threading.Thread):
     self.flush_queue_lock = threading.Lock()
 
     if DRONE_RTSP_PORT is not None:
-      self.drone.streaming.server_addr = f"{DRONE_IP}:{DRONE_RTSP_PORT}"
+      self.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
 
     # Setup the callback functions to do some live video processing
     self.drone.streaming.set_callbacks(
@@ -153,30 +147,30 @@ class Anafi(threading.Thread):
       flush_raw_cb=self.flush_cb
     )
     self.init_camera_angle(camera_angel=-90)
-		self.drone.streaming.start()
+    self.drone.streaming.start()
 
 	# TODO: Instead do this from the perception module over topic
-	def init_camera_angle(self, camera_angel):
-		# Init gimbal
-		max_speed = 180 # Max speeds: Pitch 180, Roll/Yaw 0.
+  def init_camera_angle(self, camera_angel):
+    # Init gimbal
+    max_speed = 180 # Max speeds: Pitch 180, Roll/Yaw 0.
 
-		self.drone(olympe.messages.gimbal.set_max_speed(
-			gimbal_id=0,
-			yaw=0,
-			pitch=max_speed,
-			roll=0,
-		))
+    self.drone(olympe.messages.gimbal.set_max_speed(
+      gimbal_id=0,
+      yaw=0,
+      pitch=max_speed,
+      roll=0,
+    ))
 
-		self.drone(olympe.messages.gimbal.set_target(
-			gimbal_id=0,
-			control_mode="position",
-			roll_frame_of_reference="relative",
-			roll=0,
-			pitch_frame_of_reference="relative",
-			pitch=camera_angel,
-			yaw_frame_of_reference="relative",
-			yaw=0
-		))
+    self.drone(olympe.messages.gimbal.set_target(
+      gimbal_id=0,
+      control_mode="position",
+      roll_frame_of_reference="relative",
+      roll=0,
+      pitch_frame_of_reference="relative",
+      pitch=camera_angel,
+      yaw_frame_of_reference="relative",
+      yaw=0
+    ))
     
 
   def disconnect(self):
@@ -203,9 +197,9 @@ class Anafi(threading.Thread):
       self.drone(MaxAltitude(config['max_altitude'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.MaxAltitude
       self.drone(NoFlyOverMaxDistance(1)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.NoFlyOverMaxDistance
       self.drone(BankedTurn(int(config['banked_turn']))).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.BankedTurn
-      self.max_tilt = config['max_tilt']
+      self.max_tilt = np.deg2rad(config['max_tilt'])
       self.max_vertical_speed = config['max_vertical_speed']
-      self.max_rotation_speed = config['max_yaw_rotation_speed']
+      self.max_rotation_speed = np.deg2rad(config['max_yaw_rotation_speed'])
     if level == -1 or level == 2:
       self.gimbal_frame = 'absolute' if config['gimbal_compensation'] else 'relative'
       self.drone(gimbal.set_max_speed(
@@ -218,7 +212,7 @@ class Anafi(threading.Thread):
     
 
   # This function will be called by Olympe for each decoded YUV frame.
-  def yuv_frame_cb(self, yuv_frame):      
+  def yuv_frame_cb(self, yuv_frame):  
     yuv_frame.ref()
     self.frame_queue.put_nowait(yuv_frame)
 
@@ -546,9 +540,9 @@ class Anafi(threading.Thread):
       if i >= min_iterations:
         att_euler = self.drone.get_state(AttitudeChanged)
 
-        roll = att_euler["roll"] # np.pi / 4    
-        pitch = att_euler["pitch"] # np.pi / 10   
-        yaw = att_euler["yaw"] # -np.pi /2 
+        roll = att_euler["roll"]     
+        pitch = att_euler["pitch"]    
+        yaw = att_euler["yaw"]  
 
         # Check if new 5 Hz data has arrived
         if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
@@ -611,12 +605,12 @@ class Anafi(threading.Thread):
 
         # R_ned_to_body = Rx(telemetry_msg.roll).T @ Ry(telemetry_msg.pitch).T @ Rz(telemetry_msg.yaw).T
 
-
       
       with self.flush_queue_lock:
         try:					
           yuv_frame = self.frame_queue.get(timeout=0.01)
         except queue.Empty:
+          # print("Empty queue")
           continue
         
         try:
