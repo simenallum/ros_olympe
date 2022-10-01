@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <launch>
-    <arg name="indoor" default="false"/>
+    <arg name="indoor" default="false"/> <!-- This has to be set to False when using sim -->
     <param name="indoor" type="boolean" value="$(arg indoor)" />
 
 	<param name="drone_ip" type="string" value="10.202.0.1" />
