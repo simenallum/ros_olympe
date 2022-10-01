@@ -58,7 +58,7 @@ class Anafi(threading.Thread):
     self.pub_attitude = rospy.Publisher("/anafi/attitude", QuaternionStamped, queue_size=1)
     self.pub_gnss_location = rospy.Publisher("/anafi/gnss_location", NavSatFix, queue_size=1)
     self.pub_height = rospy.Publisher("/anafi/height", Float32, queue_size=1)
-    self.pub_speed = rospy.Publisher("/anafi/optical_flow_speed", Vector3Stamped, queue_size=1)
+    self.pub_optical_flow_speed = rospy.Publisher("/anafi/optical_flow_velocities", Vector3Stamped, queue_size=1)
     self.pub_air_speed = rospy.Publisher("/anafi/air_speed", Float32, queue_size=1)
     self.pub_link_goodput = rospy.Publisher("/anafi/link_goodput", UInt16, queue_size=1)
     self.pub_link_quality = rospy.Publisher("/anafi/link_quality", UInt8, queue_size=1)
@@ -70,7 +70,7 @@ class Anafi(threading.Thread):
     self.pub_odometry = rospy.Publisher("/anafi/odometry", Odometry, queue_size=1)
     self.pub_rpy = rospy.Publisher("/anafi/rpy", Vector3Stamped, queue_size=1)
     self.pub_skycontroller = rospy.Publisher("/skycontroller/command", SkyControllerCommand, queue_size=1)
-    self.pub_twist = rospy.Publisher("/anafi/twist_body", TwistStamped, queue_size=1)
+    self.pub_twist = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
 
     rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
     rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
@@ -306,7 +306,7 @@ class Anafi(threading.Thread):
       msg_speed.vector.x = speed['north']
       msg_speed.vector.y = -speed['east']
       msg_speed.vector.z = -speed['down']
-      self.pub_speed.publish(msg_speed)
+      self.pub_optical_flow_speed.publish(msg_speed)
 
       # air_speed = metadata[1]['air_speed'] # air speed [-1=no data, > 0] (m/s)
       # self.pub_air_speed.publish(air_speed)
