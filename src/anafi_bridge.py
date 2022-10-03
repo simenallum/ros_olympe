@@ -40,7 +40,7 @@ from scipy.spatial.transform import Rotation as R
 
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
-from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand
+from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
 
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
@@ -60,9 +60,8 @@ class Anafi(threading.Thread):
 		self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
 		self.pub_attitude = rospy.Publisher("/anafi/attitude", QuaternionStamped, queue_size=1)
 		self.pub_gnss_location = rospy.Publisher("/anafi/gnss_location", NavSatFix, queue_size=1)
-		self.pub_height = rospy.Publisher("/anafi/height", Float32, queue_size=1)
+		self.pub_height = rospy.Publisher("/anafi/height", Float32Stamped, queue_size=1)
 		self.pub_optical_flow_velocities = rospy.Publisher("/anafi/optical_flow_velocities", Vector3Stamped, queue_size=1)
-		self.pub_air_speed = rospy.Publisher("/anafi/air_speed", Float32, queue_size=1)
 		self.pub_link_goodput = rospy.Publisher("/anafi/link_goodput", UInt16, queue_size=1)
 		self.pub_link_quality = rospy.Publisher("/anafi/link_quality", UInt8, queue_size=1)
 		self.pub_wifi_rssi = rospy.Publisher("/anafi/wifi_rssi", Int8, queue_size=1)
@@ -122,10 +121,9 @@ class Anafi(threading.Thread):
 
 		# If the skycontroller is used as relay, the piloting source has to be set to "Controller"
 		if self.drone_ip == "192.168.53.1":
-			self.drone(setPilotingSource(source="Controller")).wait()
-			
-		self.frame_queue = queue.Queue()
-		self.flush_queue_lock = threading.Lock()
+			# self.drone(setPilotingSource(source="Controller")).wait()
+			self.switch_manual()
+			self.switch_offboard()
 
 		if DRONE_RTSP_PORT is not None:
 			self.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
@@ -275,7 +273,10 @@ class Anafi(threading.Thread):
 					self.pub_gnss_location.publish(msg_location)
 				
 			ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
-			self.pub_height.publish(ground_distance)
+			height_msg = Float32Stamped()
+			height_msg.header = header
+			height_msg.data = ground_distance
+			self.pub_height.publish(height_msg)
 
 			speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
 			msg_speed = Vector3Stamped()
@@ -352,16 +353,6 @@ class Anafi(threading.Thread):
 		else:
 			rospy.logwarn("Packet lost!")
 
-
-	def pretty(self, d, indent=0):
-		for key, value in d.items():
-			print('\t' * indent + str(key))
-			if isinstance(value, dict):
-				self.pretty(value, indent+1)
-			else:
-				print('\t' * (indent+1) + str(value))
-
-		
 	def takeoff_callback(self, msg : Empty) -> None:		
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
 		self.drone(TakeOff() >> FlyingStateChanged(state="hovering", _timeout=10)).wait() 
@@ -453,6 +444,28 @@ class Anafi(threading.Thread):
 
 	def bound_percentage(self, value):
 		return self.bound(value, -100, 100)
+
+	def switch_manual(self):
+		msg_rpyt = SkyControllerCommand()
+		msg_rpyt.header.stamp = rospy.Time.now()
+		msg_rpyt.header.frame_id = '/body'
+		self.pub_skycontroller.publish(msg_rpyt)
+
+		# button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
+		self.drone(mapper.grab(buttons=(0<<0|0<<1|0<<2|1<<3), axes=0)).wait() # bitfields
+		self.drone(setPilotingSource(source="SkyController")).wait()
+		rospy.loginfo("Control: Manual")
+
+
+	def switch_offboard(self):
+		# button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
+		# axis: 	0 = yaw, 1 = trottle, 2 = roll, 3 = pithch, 4 = camera, 5 = zoom
+		if self.drone.get_state(pilotingSource)["source"] == PilotingSource_Source.SkyController:
+			self.drone(mapper.grab(buttons=(1<<0|0<<1|1<<2|1<<3), axes=(1<<0|1<<1|1<<2|1<<3|0<<4|0<<5))) # bitfields
+			self.drone(setPilotingSource(source="Controller")).wait()
+			rospy.loginfo("Control: Offboard")
+		else:
+			self.switch_manual()
 
 	def qualisys_callback(self, msg: PoseStamped):
 		x = msg.pose.position.x
@@ -655,7 +668,6 @@ class EveryEventListener(olympe.EventListener):
 	# All other events
 	@olympe.listen_event()
 	def default(self, event, scheduler):
-		#self.print_event(event)
 		pass
 
 
