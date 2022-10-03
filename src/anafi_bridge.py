@@ -545,24 +545,24 @@ class Anafi(threading.Thread):
 						s = np.sin(radians)
 
 						return np.array([[1, 0, 0],
-														[0, c, -s],
-														[0, s, c]])
+										[0, c, -s],
+										[0, s, c]])
 
 					def Ry(radians):
 						c = np.cos(radians)
 						s = np.sin(radians)
 
 						return np.array([[c, 0, s],
-														[0, 1, 0],
-														[-s, 0, c]])
+										[0, 1, 0],
+										[-s, 0, c]])
 
 					def Rz(radians):
 						c = np.cos(radians)
 						s = np.sin(radians)
 
 						return np.array([[c, -s, 0],
-														[s, c, 0],
-														[0, 0, 1]])
+										[s, c, 0],
+										[0, 0, 1]])
 
 					# Tried to use scipy's rotaion-matrix, but wouldn't get quite right...
 					# R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
