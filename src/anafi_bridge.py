@@ -94,7 +94,7 @@ class Anafi(threading.Thread):
 		
 		# Create listener for RC events
 		self.every_event_listener = EveryEventListener(self)
-		
+
 		rospy.on_shutdown(self.stop)
 		
 		self.srv = Server(setAnafiConfig, self.reconfigure_callback)
@@ -119,11 +119,13 @@ class Anafi(threading.Thread):
 				exit()
 			rate.sleep()
 
-		# If the skycontroller is used as relay, the piloting source has to be set to "Controller"
+		#TODO WE have to find a better way to do this
 		if self.drone_ip == "192.168.53.1":
-			# self.drone(setPilotingSource(source="Controller")).wait()
 			self.switch_manual()
-			self.switch_offboard()
+			# self.switch_offboard()
+
+		self.frame_queue = queue.Queue()
+		self.flush_queue_lock = threading.Lock()
 
 		if DRONE_RTSP_PORT is not None:
 			self.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
@@ -231,33 +233,44 @@ class Anafi(threading.Thread):
 			msg_time = Time()
 			msg_time.data = rospy.Time(secs, nanosecs) # secs = int(frame_timestamp//1e6), nsecs = int(frame_timestamp%1e6*1e3)
 			self.pub_time.publish(msg_time)
+
 			
-			drone_quat = metadata[1]['drone']['quat'] # attitude
-			msg_attitude = QuaternionStamped()
-			msg_attitude.header = header
-			msg_attitude.quaternion = Quaternion(drone_quat['x'], -drone_quat['y'], -drone_quat['z'], drone_quat['w'])
-			self.pub_attitude.publish(msg_attitude)
+			if "drone" in metadata[1]:
+				drone_quat = metadata[1]['drone']['quat'] # attitude
+				msg_attitude = QuaternionStamped()
+				msg_attitude.header = header
+
+				# TODO Rewrite this part to more readable code. Currenly using magic number etc.
+        # This part adds the offsets to the quaternions before it is published
+				Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
+				drone_rpy = Rot.as_euler('xyz', degrees=False)
+				drone_rpy_corrected = drone_rpy + (-0.009875596168668191, -0.006219417359313843, 0)
+				rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
+				quat = R.as_quat(rot_corrected)
+				msg_attitude.quaternion = Quaternion(quat[0], quat[1], quat[2], quat[3])
+				# msg_attitude.quaternion = Quaternion(drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w'])
+				
+				self.pub_attitude.publish(msg_attitude)
 					
-			if "location" in metadata[1]['drone']:
-				location = metadata[1]['drone']['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
-				msg_location = NavSatFix()
-				if location != {}:			
-					msg_location.header = header
-					msg_location.header.frame_id = '/world'
-					msg_location.status = 0                         # Fix since data acquired
-					msg_location.latitude = location['latitude']    # [deg]
-					msg_location.longitude = location['longitude']  # [deg]
-					msg_location.altitude = location['altitude']    # [m] over WGS84
+				if "location" in metadata[1]['drone']:
+					location = metadata[1]['drone']['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
+					msg_location = NavSatFix()
+					if location != {}:			
+						msg_location.header = header
+						msg_location.header.frame_id = '/world'
+						msg_location.status = 0                         # Fix since data acquired
+						msg_location.latitude = location['latitude']    # [deg]
+						msg_location.longitude = location['longitude']  # [deg]
+						msg_location.altitude = location['altitude']    # [m] over WGS84
 
-					status = NavSatStatus()
-					status.status = 0                               # unaugmented fix assumed since position achieved
-					status.service = 8                              # GALILEO ftw! (Unsure how to get this data)
+						status = NavSatStatus()
+						status.status = 0                               # unaugmented fix assumed since position achieved
+						status.service = 8                              # GALILEO ftw! (Unsure how to get this data)
 
-					msg_location.status = status
-					self.pub_gnss_location.publish(msg_location)
-			else:
-				msg_location = NavSatFix()
-				if location != {}:			
+						msg_location.status = status
+						self.pub_gnss_location.publish(msg_location)
+				else:
+					msg_location = NavSatFix()		
 					msg_location.header = header
 					msg_location.header.frame_id = '/world'
 					msg_location.status = 0                         # Fix since data acquired
@@ -271,21 +284,27 @@ class Anafi(threading.Thread):
 
 					msg_location.status = status
 					self.pub_gnss_location.publish(msg_location)
-				
-			ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
-			height_msg = Float32Stamped()
-			height_msg.header = header
-			height_msg.data = ground_distance
-			self.pub_height.publish(height_msg)
+					
+				ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
+				height_msg = Float32Stamped()
+				height_msg.header = header
+				height_msg.data = ground_distance
+				self.pub_height.publish(height_msg)
 
-			speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
-			msg_speed = Vector3Stamped()
-			msg_speed.header = header
-			msg_speed.header.frame_id = '/world'
-			msg_speed.vector.x = speed['north']
-			msg_speed.vector.y = -speed['east']
-			msg_speed.vector.z = -speed['down']
-			self.pub_optical_flow_velocities.publish(msg_speed)
+				speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
+				msg_speed = Vector3Stamped()
+				msg_speed.header = header
+				msg_speed.header.frame_id = '/world'
+				msg_speed.vector.x = speed['north']
+				msg_speed.vector.y = speed['east']
+				msg_speed.vector.z = speed['down']
+				self.pub_optical_flow_velocities.publish(msg_speed)
+
+				battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
+				self.pub_battery.publish(battery_percentage)
+
+				state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
+				self.pub_state.publish(state)
 
 			link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
 			self.pub_link_goodput.publish(link_goodput)
@@ -295,13 +314,6 @@ class Anafi(threading.Thread):
 
 			wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
 			self.pub_wifi_rssi.publish(wifi_rssi)
-
-			battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
-			self.pub_battery.publish(battery_percentage)
-
-			state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
-			self.pub_state.publish(state)
-			# self.pub_mode.publish(mode)
 			
 			msg_pose = PoseStamped()
 			msg_pose.header = header
@@ -311,7 +323,7 @@ class Anafi(threading.Thread):
 			msg_pose.pose.orientation = msg_attitude.quaternion
 			self.pub_pose.publish(msg_pose)
 			
-			Rot = R.from_quat([drone_quat['x'], -drone_quat['y'], -drone_quat['z'], drone_quat['w']])
+			Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
 			drone_rpy = Rot.as_euler('xyz')
 			self.drone_rpy = drone_rpy
 			
@@ -420,6 +432,8 @@ class Anafi(threading.Thread):
 		if msg.action & 0b100: # stop recording
 			self.drone(camera.stop_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
 
+		rospy.loginfo("Received gimal command")
+
 		# https://developer.parrot.com/docs/olympe/arsdkng_gimbal.html#olympe.messages.gimbal.set_target
 		self.drone(gimbal.set_target( 
 			gimbal_id=0,
@@ -507,18 +521,7 @@ class Anafi(threading.Thread):
 				rospy.logfatal(str(connection))
 				self.disconnect()
 				self.connect()
-			
-			# SLOW -- 5Hz			
-			#attitude = self.drone.get_state(AttitudeChanged) # attitude
-			#rospy.loginfo("Attitude: " + str(attitude))
-			#msg_rpy = Vector3Stamped()
-			#msg_rpy.header.seq = self.seq
-			#msg_rpy.header.stamp = rospy.Time.now()
-			#msg_rpy.header.frame_id = '/world'
-			#msg_rpy.vector.x = attitude['roll']/math.pi*180
-			#msg_rpy.vector.y = -attitude['pitch']/math.pi*180
-			#msg_rpy.vector.z = -attitude['yaw']/math.pi*180
-			#self.pub_rpy.publish(msg_rpy)
+
 			if i >= min_iterations:
 				att_euler = self.drone.get_state(AttitudeChanged)
 
@@ -657,12 +660,22 @@ class EveryEventListener(olympe.EventListener):
 		if event.args["axis"] == 0: # yaw
 			self.msg_rpyt.yaw = event.args["value"]
 		if event.args["axis"] == 1: # z
-			self.msg_rpyt.z = event.args["value"]
+			self.msg_rpyt.z = c
 		if event.args["axis"] == 2: # y/pitch
 			self.msg_rpyt.y = event.argtrue
 		self.msg_rpyt.header.stamp = rospy.Time.now()
 		self.msg_rpyt.header.frame_id = '/body'
 		self.anafi.pub_skycontroller.publish(self.msg_rpyt)
+
+	@olympe.listen_event(AttitudeChanged(_policy="wait"))
+	def onAttitudeChanged(self, event, scheduler):
+		msg_rpy = Vector3Stamped()
+		msg_rpy.header.stamp = rospy.Time.now()
+		msg_rpy.header.frame_id = '/world'
+		msg_rpy.vector.x = event.args["roll"]
+		msg_rpy.vector.y = event.args["pitch"]
+		msg_rpy.vector.z = event.args["yaw"]
+		self.anafi.pub_rpy.publish(msg_rpy)
 							
 
 	# All other events
