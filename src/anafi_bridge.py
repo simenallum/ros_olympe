@@ -244,7 +244,7 @@ class Anafi(threading.Thread):
         # This part adds the offsets to the quaternions before it is published
 				Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
 				drone_rpy = Rot.as_euler('xyz', degrees=False)
-				drone_rpy_corrected = drone_rpy + (-0.009875596168668191, -0.006219417359313843, 0)
+				drone_rpy_corrected = drone_rpy # + (-0.009875596168668191, -0.006219417359313843, 0)
 				rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
 				quat = R.as_quat(rot_corrected)
 				msg_attitude.quaternion = Quaternion(quat[0], quat[1], quat[2], quat[3])
@@ -392,12 +392,18 @@ class Anafi(threading.Thread):
 
 	def rpyt_callback(self, msg : AttitudeCommand) -> None:
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.PCMD
+		
+		# Testing in the simulator shows that the roll and pitch-commands must be multiplied with 0.5
+		
+		# Negative in pitch to get it into NED
+		# Negative in gaz to get it into NED. gaz > 0 means negative velocity downwards
+
 		self.drone(PCMD( 
 			flag=1,
-			roll=int(self.bound_percentage(msg.roll/self.max_tilt*100)),          # roll [-100, 100] (% of max tilt)
-			pitch=int(self.bound_percentage(msg.pitch/self.max_tilt*100)),        # pitch [-100, 100] (% of max tilt)
-			yaw=int(self.bound_percentage(-msg.yaw/self.max_rotation_speed*100)), # yaw rate [-100, 100] (% of max yaw rate)
-			gaz=int(self.bound_percentage(msg.gaz/self.max_vertical_speed*100)),  # vertical speed [-100, 100] (% of max vertical speed)
+			roll=int(self.bound_percentage(0.5 * msg.roll/self.max_tilt*100)),      # roll [-100, 100] (% of max tilt)
+			pitch=int(self.bound_percentage(-0.5 * msg.pitch/self.max_tilt*100)),   # pitch [-100, 100] (% of max tilt)
+			yaw=int(self.bound_percentage(msg.yaw/self.max_rotation_speed*100)), 		# yaw rate [-100, 100] (% of max yaw rate)
+			gaz=int(self.bound_percentage(-msg.gaz/self.max_vertical_speed*100)),  	# vertical speed [-100, 100] (% of max vertical speed)
 			timestampAndSeqNum=0)) # for debug only
 
 
