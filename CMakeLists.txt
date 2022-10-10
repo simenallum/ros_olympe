@@ -58,6 +58,7 @@ add_message_files(
   MoveToCommand.msg
   SkyControllerCommand.msg
   CameraCommand.msg
+  Float32Stamped.msg
 )
 
 ## Generate services in the 'srv' folder
