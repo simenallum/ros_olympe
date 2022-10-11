@@ -50,6 +50,17 @@ DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 class Anafi(threading.Thread):
 	def __init__(self):
+		self.roll_cmd_scale = rospy.get_param("/roll_cmd_scale")
+		self.pitch_cmd_scale = rospy.get_param("/pitch_cmd_scale")
+		self.thrust_cmd_scale = rospy.get_param("/thrust_cmd_scale")
+
+		rospy.loginfo("Using scales for roll: {}, pitch: {} and thrust: {}".format(
+			self.roll_cmd_scale,
+			self.pitch_cmd_scale,
+			self.thrust_cmd_scale
+			)
+		)
+
 		self.is_qualisys_available = rospy.get_param("/qualisys_available")
 
 		if self.is_qualisys_available:			
@@ -391,12 +402,14 @@ class Anafi(threading.Thread):
 		# Negative in pitch to get it into NED
 		# Negative in gaz to get it into NED. gaz > 0 means negative velocity downwards
 
+		# Can I just say how much I hate that the PCMD takes the command in yaw, when it clearly is yaw rate
+
 		self.drone(PCMD( 
 			flag=1,
-			roll=int(self.bound_percentage(0.5 * msg.roll/self.max_tilt*100)),      # roll [-100, 100] (% of max tilt)
-			pitch=int(self.bound_percentage(-0.5 * msg.pitch/self.max_tilt*100)),   # pitch [-100, 100] (% of max tilt)
-			yaw=int(self.bound_percentage(msg.yaw/self.max_rotation_speed*100)), 		# yaw rate [-100, 100] (% of max yaw rate)
-			gaz=int(self.bound_percentage(-msg.gaz/self.max_vertical_speed*100)),  	# vertical speed [-100, 100] (% of max vertical speed)
+			roll=int(self.bound_percentage(self.roll_cmd_scale * msg.roll / self.max_tilt * 100)),      			# roll [-100, 100] (% of max tilt)
+			pitch=int(self.bound_percentage(-self.pitch_cmd_scale * msg.pitch / self.max_tilt * 100)),   			# pitch [-100, 100] (% of max tilt)
+			yaw=int(self.bound_percentage(msg.yaw / self.max_rotation_speed * 100)), 													# yaw rate [-100, 100] (% of max yaw rate)
+			gaz=int(self.bound_percentage(-self.thrust_cmd_scale * msg.gaz / self.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
 			timestampAndSeqNum=0)) # for debug only
 
 
