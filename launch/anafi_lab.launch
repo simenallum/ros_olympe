@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 
 <launch>
-	<arg name="indoor" default="true"/>
+	<arg name="qualisys_available" default="true"/>
 
-	<param name="indoor" type="boolean" value="$(arg indoor)" />
+	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
 
 	<param name="drone_ip" type="string" value="192.168.53.1" /> <!-- This is the skycontroller IP -->
 
