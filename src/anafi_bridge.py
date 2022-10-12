@@ -246,21 +246,22 @@ class Anafi(threading.Thread):
 			
 			if "drone" in metadata[1]:
 				drone_quat = metadata[1]['drone']['quat'] # attitude
-				msg_attitude = QuaternionStamped()
-				msg_attitude.header = header
+				quat = [drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']]
 
-				# TODO Rewrite this part to more readable code. Currenly using magic number etc.
-        # This part adds the offsets to the quaternions before it is published
-				if self.is_qualisys_available:
-					Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
-					drone_rpy = Rot.as_euler('xyz', degrees=False)
+				Rot = R.from_quat(quat)
+				drone_rpy = Rot.as_euler('xyz', degrees=False)
+			
+				# Must find a better method for this
+				if self.drone_ip == "192.168.53.1":
+					# TODO Rewrite this part to more readable code. Currenly using magic number etc.
+					# This part adds the offsets to the quaternions before it is published
 					drone_rpy_corrected = drone_rpy + (-0.009875596168668191, -0.006219417359313843, 0)
 					rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
 					quat = R.as_quat(rot_corrected)
-				else:
-					quat = np.array([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']], dtype=np.float)
+
+				msg_attitude = QuaternionStamped()
+				msg_attitude.header = header
 				msg_attitude.quaternion = Quaternion(quat[0], quat[1], quat[2], quat[3])
-				
 				self.pub_attitude.publish(msg_attitude)
 
 				msg_location = NavSatFix()
@@ -281,7 +282,6 @@ class Anafi(threading.Thread):
 						status.status = -1	# No position fix
 
 				elif self.is_qualisys_available:
-					msg_location = NavSatFix()		
 					msg_location.header = header
 					msg_location.header.frame_id = '/world'
 					msg_location.latitude = self.last_received_location.latitude
@@ -308,6 +308,14 @@ class Anafi(threading.Thread):
 				msg_speed.vector.z = speed['down']
 				self.pub_optical_flow_velocities.publish(msg_speed)
 				
+				msg_pose = PoseStamped()
+				msg_pose.header = header
+				msg_pose.pose.position.x = msg_location.latitude
+				msg_pose.pose.position.y = msg_location.longitude
+				msg_pose.pose.position.z = ground_distance
+				msg_pose.pose.orientation = msg_attitude.quaternion
+				self.pub_pose.publish(msg_pose)
+
 				msg_odometry = Odometry()
 				msg_odometry.header = header
 				msg_odometry.child_frame_id = '/body'
@@ -332,14 +340,6 @@ class Anafi(threading.Thread):
 
 				wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
 				self.pub_wifi_rssi.publish(wifi_rssi)
-			
-			msg_pose = PoseStamped()
-			msg_pose.header = header
-			msg_pose.pose.position.x = msg_location.latitude
-			msg_pose.pose.position.y = msg_location.longitude
-			msg_pose.pose.position.z = ground_distance
-			msg_pose.pose.orientation = msg_attitude.quaternion
-			self.pub_pose.publish(msg_pose)
 			
 			# Log battery percentage
 			if battery_percentage >= 30:
