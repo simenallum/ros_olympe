@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+
+<launch>
+	<arg name="qualisys_available" default="true"/>
+
+	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
+	
+	<!-- Testing on the lab indicates that the cmds are correct in the real world. Note that more testing is required  -->
+	<param name="roll_cmd_scale" type="double" value="1.0" />
+	<param name="pitch_cmd_scale" type="double" value="1.0" />
+	<param name="thrust_cmd_scale" type="double" value="1.0" />
+
+	<param name="drone_ip" type="string" value="192.168.53.1" /> <!-- This is the skycontroller IP -->
+
+	<node name="anafi_bridge" pkg="olympe_bridge" type="anafi_bridge.py" output="screen"/>
+</launch>

@@ -50,11 +50,23 @@ DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 class Anafi(threading.Thread):
 	def __init__(self):
-		self.is_indoor = rospy.get_param("/indoor")
-		if self.is_indoor:			
-			rospy.loginfo("We are indoor")
+		self.roll_cmd_scale = rospy.get_param("/roll_cmd_scale")
+		self.pitch_cmd_scale = rospy.get_param("/pitch_cmd_scale")
+		self.thrust_cmd_scale = rospy.get_param("/thrust_cmd_scale")
+
+		rospy.loginfo("Using scales for roll: {}, pitch: {} and thrust: {}".format(
+			self.roll_cmd_scale,
+			self.pitch_cmd_scale,
+			self.thrust_cmd_scale
+			)
+		)
+
+		self.is_qualisys_available = rospy.get_param("/qualisys_available")
+
+		if self.is_qualisys_available:			
+			rospy.loginfo("Flying at drone lab: Qualisys is available")
 		else:
-			rospy.loginfo("We are outdoor")
+			rospy.loginfo("Not flying at the lab: Qualisys is unavailable")
 					
 		self.pub_image = rospy.Publisher("/anafi/image", Image, queue_size=1)
 		self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
@@ -83,7 +95,7 @@ class Anafi(threading.Thread):
 		rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
 		rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
 
-		if self.is_indoor:
+		if self.is_qualisys_available:
 			rospy.Subscriber("/qualisys/Anafi/pose", PoseStamped, self.qualisys_callback)
 			self.last_received_location = NavSatFix()
 		
@@ -154,14 +166,14 @@ class Anafi(threading.Thread):
 
 	def reconfigure_callback(self, config, level):
 		if level == -1 or level == 1:
-			self.drone(MaxTilt(config['max_tilt'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html?#olympe.messages.ardrone3.PilotingSettings.MaxTilt
-			self.drone(MaxVerticalSpeed(config['max_vertical_speed'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxVerticalSpeed
-			self.drone(MaxRotationSpeed(config['max_yaw_rotation_speed'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxRotationSpeed
+			self.drone(MaxTilt(config['max_tilt'])).wait() 																				# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html?#olympe.messages.ardrone3.PilotingSettings.MaxTilt
+			self.drone(MaxVerticalSpeed(config['max_vertical_speed'])).wait() 										# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxVerticalSpeed
+			self.drone(MaxRotationSpeed(config['max_yaw_rotation_speed'])).wait() 								# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxRotationSpeed
 			self.drone(MaxPitchRollRotationSpeed(config['max_pitch_roll_rotation_speed'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxPitchRollRotationSpeed
-			self.drone(MaxDistance(config['max_distance'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.MaxDistance
-			self.drone(MaxAltitude(config['max_altitude'])).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.MaxAltitude
-			self.drone(NoFlyOverMaxDistance(1)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.NoFlyOverMaxDistance
-			self.drone(BankedTurn(int(config['banked_turn']))).wait() # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.BankedTurn
+			self.drone(MaxDistance(config['max_distance'])).wait() 																# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.MaxDistance
+			self.drone(MaxAltitude(config['max_altitude'])).wait() 																# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.MaxAltitude
+			self.drone(NoFlyOverMaxDistance(1)).wait() 																						# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.NoFlyOverMaxDistance
+			self.drone(BankedTurn(int(config['banked_turn']))).wait() 														# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.PilotingSettings.BankedTurn
 			self.max_tilt = np.deg2rad(config['max_tilt'])
 			self.max_vertical_speed = config['max_vertical_speed']
 			self.max_rotation_speed = np.deg2rad(config['max_yaw_rotation_speed'])
@@ -197,9 +209,6 @@ class Anafi(threading.Thread):
 			info["raw"]["frame"]["info"]["height"],
 			info["raw"]["frame"]["info"]["width"],
 		)
-
-		# yuv_frame.vmeta() returns a dictionary that contains additional
-		# metadata from the drone (GPS coordinates, battery percentage, ...)
 
 		# convert pdraw YUV flag to OpenCV YUV flag
 		cv2_cvt_color_flag = {
@@ -237,53 +246,52 @@ class Anafi(threading.Thread):
 			
 			if "drone" in metadata[1]:
 				drone_quat = metadata[1]['drone']['quat'] # attitude
+				quat = [drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']]
+
+				Rot = R.from_quat(quat)
+				drone_rpy = Rot.as_euler('xyz', degrees=False)
+			
+				# Must find a better method for this
+				if self.drone_ip == "192.168.53.1":
+					# TODO Rewrite this part to more readable code. Currenly using magic number etc.
+					# This part adds the offsets to the quaternions before it is published
+					drone_rpy_corrected = drone_rpy + (-0.009875596168668191, -0.006219417359313843, 0)
+					rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
+					quat = R.as_quat(rot_corrected)
+
 				msg_attitude = QuaternionStamped()
 				msg_attitude.header = header
-
-				# TODO Rewrite this part to more readable code. Currenly using magic number etc.
-        # This part adds the offsets to the quaternions before it is published
-				Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
-				drone_rpy = Rot.as_euler('xyz', degrees=False)
-				drone_rpy_corrected = drone_rpy # + (-0.009875596168668191, -0.006219417359313843, 0)
-				rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
-				quat = R.as_quat(rot_corrected)
 				msg_attitude.quaternion = Quaternion(quat[0], quat[1], quat[2], quat[3])
-				# msg_attitude.quaternion = Quaternion(drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w'])
-				
 				self.pub_attitude.publish(msg_attitude)
-					
+
+				msg_location = NavSatFix()
+				status = NavSatStatus()
 				if "location" in metadata[1]['drone']:
 					location = metadata[1]['drone']['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
-					msg_location = NavSatFix()
 					if location != {}:			
 						msg_location.header = header
 						msg_location.header.frame_id = '/world'
-						msg_location.status = 0                         # Fix since data acquired
 						msg_location.latitude = location['latitude']    # [deg]
 						msg_location.longitude = location['longitude']  # [deg]
 						msg_location.altitude = location['altitude']    # [m] over WGS84
 
-						status = NavSatStatus()
-						status.status = 0                               # unaugmented fix assumed since position achieved
-						status.service = 8                              # GALILEO ftw! (Unsure how to get this data)
+						status.status = 0 	# Position fix
 
-						msg_location.status = status
-						self.pub_gnss_location.publish(msg_location)
-				else:
-					msg_location = NavSatFix()		
+					else:
+						# No connection
+						status.status = -1	# No position fix
+
+				elif self.is_qualisys_available:
 					msg_location.header = header
 					msg_location.header.frame_id = '/world'
-					msg_location.status = 0                         # Fix since data acquired
 					msg_location.latitude = self.last_received_location.latitude
 					msg_location.longitude = self.last_received_location.longitude
 					msg_location.altitude = self.last_received_location.altitude
 
-					status = NavSatStatus()
-					status.status = 0                               # unaugmented fix assumed since position achieved
-					status.service = 8                              # GALILEO ftw! (Unsure how to get this data)
+					status.status = 0	# Position fix
 
-					msg_location.status = status
-					self.pub_gnss_location.publish(msg_location)
+				msg_location.status = status
+				self.pub_gnss_location.publish(msg_location)
 					
 				ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
 				height_msg = Float32Stamped()
@@ -299,6 +307,23 @@ class Anafi(threading.Thread):
 				msg_speed.vector.y = speed['east']
 				msg_speed.vector.z = speed['down']
 				self.pub_optical_flow_velocities.publish(msg_speed)
+				
+				msg_pose = PoseStamped()
+				msg_pose.header = header
+				msg_pose.pose.position.x = msg_location.latitude
+				msg_pose.pose.position.y = msg_location.longitude
+				msg_pose.pose.position.z = ground_distance
+				msg_pose.pose.orientation = msg_attitude.quaternion
+				self.pub_pose.publish(msg_pose)
+
+				msg_odometry = Odometry()
+				msg_odometry.header = header
+				msg_odometry.child_frame_id = '/body'
+				msg_odometry.pose.pose = msg_pose.pose
+				msg_odometry.twist.twist.linear.x =  math.cos(drone_rpy[2])*msg_speed.vector.x + math.sin(drone_rpy[2])*msg_speed.vector.y
+				msg_odometry.twist.twist.linear.y = -math.sin(drone_rpy[2])*msg_speed.vector.x + math.cos(drone_rpy[2])*msg_speed.vector.y
+				msg_odometry.twist.twist.linear.z = msg_speed.vector.z
+				self.pub_odometry.publish(msg_odometry)
 
 				battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
 				self.pub_battery.publish(battery_percentage)
@@ -306,42 +331,21 @@ class Anafi(threading.Thread):
 				state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
 				self.pub_state.publish(state)
 
-			link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
-			self.pub_link_goodput.publish(link_goodput)
+			if 'links' in metadata[1]:
+				link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
+				self.pub_link_goodput.publish(link_goodput)
 
-			link_quality = metadata[1]['links'][0]['wifi']['quality'] # [0=bad, 5=good]
-			self.pub_link_quality.publish(link_quality)
+				link_quality = metadata[1]['links'][0]['wifi']['quality'] # [0=bad, 5=good]
+				self.pub_link_quality.publish(link_quality)
 
-			wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
-			self.pub_wifi_rssi.publish(wifi_rssi)
+				wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
+				self.pub_wifi_rssi.publish(wifi_rssi)
 			
-			msg_pose = PoseStamped()
-			msg_pose.header = header
-			msg_pose.pose.position.x = msg_location.latitude
-			msg_pose.pose.position.y = msg_location.longitude
-			msg_pose.pose.position.z = ground_distance
-			msg_pose.pose.orientation = msg_attitude.quaternion
-			self.pub_pose.publish(msg_pose)
-			
-			Rot = R.from_quat([drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']])
-			drone_rpy = Rot.as_euler('xyz')
-			self.drone_rpy = drone_rpy
-			
-			msg_odometry = Odometry()
-			msg_odometry.header = header
-			msg_odometry.child_frame_id = '/body'
-			msg_odometry.pose.pose = msg_pose.pose
-			msg_odometry.twist.twist.linear.x =  math.cos(drone_rpy[2])*msg_speed.vector.x + math.sin(drone_rpy[2])*msg_speed.vector.y
-			msg_odometry.twist.twist.linear.y = -math.sin(drone_rpy[2])*msg_speed.vector.x + math.cos(drone_rpy[2])*msg_speed.vector.y
-			msg_odometry.twist.twist.linear.z = msg_speed.vector.z
-			self.pub_odometry.publish(msg_odometry)
-			
-			# log battery percentage
+			# Log battery percentage
 			if battery_percentage >= 30:
-				if battery_percentage%10 == 0:
+				if battery_percentage % 10 == 0:
 					rospy.loginfo_throttle(100, "Battery level: " + str(battery_percentage) + "%")
 			else:
-				drone_rpy
 				if battery_percentage >= 20:
 					rospy.logwarn_throttle(10, "Low battery: " + str(battery_percentage) + "%")
 				else:
@@ -350,7 +354,7 @@ class Anafi(threading.Thread):
 					else:
 						rospy.logfatal_throttle(0.1, "Empty battery: " + str(battery_percentage) + "%")		
 					
-			# log signal strength
+			# Log signal strength
 			if wifi_rssi <= -60:
 				if wifi_rssi >= -70:
 					rospy.loginfo_throttle(100, "Signal strength: " + str(wifi_rssi) + "dBm")
@@ -398,12 +402,14 @@ class Anafi(threading.Thread):
 		# Negative in pitch to get it into NED
 		# Negative in gaz to get it into NED. gaz > 0 means negative velocity downwards
 
+		# Can I just say how much I hate that the PCMD takes the command in yaw, when it clearly is yaw rate
+
 		self.drone(PCMD( 
 			flag=1,
-			roll=int(self.bound_percentage(0.5 * msg.roll/self.max_tilt*100)),      # roll [-100, 100] (% of max tilt)
-			pitch=int(self.bound_percentage(-0.5 * msg.pitch/self.max_tilt*100)),   # pitch [-100, 100] (% of max tilt)
-			yaw=int(self.bound_percentage(msg.yaw/self.max_rotation_speed*100)), 		# yaw rate [-100, 100] (% of max yaw rate)
-			gaz=int(self.bound_percentage(-msg.gaz/self.max_vertical_speed*100)),  	# vertical speed [-100, 100] (% of max vertical speed)
+			roll=int(self.bound_percentage(self.roll_cmd_scale * msg.roll / self.max_tilt * 100)),      			# roll [-100, 100] (% of max tilt)
+			pitch=int(self.bound_percentage(-self.pitch_cmd_scale * msg.pitch / self.max_tilt * 100)),   			# pitch [-100, 100] (% of max tilt)
+			yaw=int(self.bound_percentage(msg.yaw / self.max_rotation_speed * 100)), 													# yaw rate [-100, 100] (% of max yaw rate)
+			gaz=int(self.bound_percentage(-self.thrust_cmd_scale * msg.gaz / self.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
 			timestampAndSeqNum=0)) # for debug only
 
 
@@ -497,7 +503,7 @@ class Anafi(threading.Thread):
 
 		lat1, lon1, h1 = pymap3d.enu2geodetic(x, y, z, \
 											lat0, lon0, h0, \
-											ell=ell_wgs84, deg=True)  # use wgs86 ellisoid
+											ell=ell_wgs84, deg=True)  # wgs84 ellisoid
 
 		self.last_received_location.latitude = lat1
 		self.last_received_location.longitude = lon1
@@ -577,9 +583,6 @@ class Anafi(threading.Thread):
 					# R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
 					R_ned_to_body = Rx(roll).T @ Ry(pitch).T @ Rz(yaw).T
 
-					# print(np.all(R_scipy == R_ned_to_body))
-					# print(R_scipy)
-					# print(R_ned_to_body)
 					velocity_body = R_ned_to_body @ velocity_ned
 
 					twist_stamped = TwistStamped()
@@ -589,19 +592,14 @@ class Anafi(threading.Thread):
 					twist_stamped.twist.linear.z = velocity_body[2]
 					self.pub_polled_velocities.publish(twist_stamped)
 					
-					# print(twist)
 					i = 0
 			else:
 				i += 1
 
-				# R_ned_to_body = Rx(telemetry_msg.roll).T @ Ry(telemetry_msg.pitch).T @ Rz(telemetry_msg.yaw).T
-
-			
 			with self.flush_queue_lock:
 				try:					
 					yuv_frame = self.frame_queue.get(timeout=0.01)
 				except queue.Empty:
-					# print("Empty queue")
 					continue
 				
 				try:
