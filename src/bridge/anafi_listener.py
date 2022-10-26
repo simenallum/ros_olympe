@@ -16,6 +16,7 @@ from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 from scipy.spatial.transform import Rotation as R
 
 from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand
+from cv_bridge import CvBridge
 
 
 class AnafiBridgeListener:
@@ -25,9 +26,9 @@ class AnafiBridgeListener:
         config    
       ) -> None:
     
-    # Initializing node
-    rospy.init_node("drone_publisher_node")
-    self.rate = rospy.Rate(config.node_rate)
+    # # Initializing node
+    # rospy.init_node("drone_publisher_node")
+    # self.rate = rospy.Rate(config.node_rate)
 
     # Initializing reference to connected drone
     self.anafi = anafi
@@ -36,29 +37,29 @@ class AnafiBridgeListener:
     self.config = config
 
     # Initialize control mode
-    self._initialize_control_mode()
+    # self._initialize_control_mode()
 
     # Initializing subscribers
-    rospy.Subscriber("/drone/cmd_takeoff", Empty, self.takeoff_callback)
-    rospy.Subscriber("/drone/cmd_land", Empty, self.land_callback)
-    rospy.Subscriber("/drone/cmd_emergency", Empty, self.emergency_callback)
-    rospy.Subscriber("/drone/cmd_offboard", Bool, self.offboard_callback)
-    rospy.Subscriber("/drone/cmd_rpyt", AttitudeCommand, self.rpyt_callback)
-    rospy.Subscriber("/drone/cmd_moveto", MoveToCommand, self.moveTo_callback)
-    rospy.Subscriber("/drone/cmd_moveby", MoveByCommand, self.moveBy_callback)
-    rospy.Subscriber("/drone/cmd_camera", CameraCommand, self.camera_callback)
+    rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
+    rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
+    rospy.Subscriber("/anafi/cmd_emergency", Empty, self.emergency_callback)
+    rospy.Subscriber("/anafi/cmd_offboard", Bool, self.offboard_callback)
+    rospy.Subscriber("/anafi/cmd_rpyt", AttitudeCommand, self.rpyt_callback)
+    rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self.moveTo_callback)
+    rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
+    rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
 
     # Initializing publishers
     self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
 
 
-  def _initialize_control_mode(self) -> None:
-    if self.config.use_manual_control:
-      rospy.loginfo("Manual control enabled")
-      self._switch_manual()
-    else:
-      rospy.loginfo("Control via code-commands enabled")
-      self._switch_offboard()
+  # def _initialize_control_mode(self) -> None:
+  #   if self.config.use_manual_control:
+  #     rospy.loginfo("Manual control enabled")
+  #     self._switch_manual()
+  #   else:
+  #     rospy.loginfo("Control via code-commands enabled")
+  #     self._switch_offboard()
 
 
   def _bound(
@@ -183,7 +184,7 @@ class AnafiBridgeListener:
     if msg.action & 0b100: # stop recording
       self.anafi.drone(camera.stop_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
 
-    rospy.loginfo("Received gimal command")
+    rospy.loginfo("Received camera command")
 
     # https://developer.parrot.com/docs/olympe/arsdkng_gimbal.html#olympe.messages.gimbal.set_target
     self.anafi.drone(
@@ -192,9 +193,9 @@ class AnafiBridgeListener:
         control_mode='position', # {'position', 'velocity'}
         yaw_frame_of_reference='none',
         yaw=0.0,
-        pitch_frame_of_reference=self.gimbal_frame, # {'absolute', 'relative', 'none'}
+        pitch_frame_of_reference=self.anafi.gimbal_frame, # {'absolute', 'relative', 'none'}
         pitch=msg.pitch,
-        roll_frame_of_reference=self.gimbal_frame, # {'absolute', 'relative', 'none'}
+        roll_frame_of_reference=self.anafi.gimbal_frame, # {'absolute', 'relative', 'none'}
         roll=msg.roll
       )
     )
@@ -221,4 +222,4 @@ class AnafiBridgeListener:
         # establish the connection again
         # Wish this was Elixir though... Supervisors <3  
 
-      self.rate.sleep()
+      # self.rate.sleep()

@@ -2,45 +2,38 @@
 
 import rospy
 import cv2
-import math
-import os
 import queue
 import threading
 import traceback
 import math
 import olympe
 import numpy as np
-import multiprocessing
-
 import pymap3d
+import os
 
-from std_msgs.msg import UInt8, UInt16, UInt32, Int8, Float32, Float64, String, Header, Time, Empty, Bool
-from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion, Twist, Vector3
+from std_msgs.msg import UInt8, UInt16, Int8, String, Header, Time
+from geometry_msgs.msg import PoseStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, NavSatFix, NavSatStatus
 
 from olympe.messages.drone_manager import connection_state
-from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy, moveTo
-from olympe.messages.ardrone3.PilotingState import FlyingStateChanged, PositionChanged, SpeedChanged, AttitudeChanged, AltitudeChanged, GpsLocationChanged
-from olympe.messages.ardrone3.PilotingSettings import MaxTilt, MaxDistance, MaxAltitude, NoFlyOverMaxDistance, BankedTurn
+from olympe.messages.ardrone3.Piloting import Emergency
+from olympe.messages.ardrone3.PilotingState import SpeedChanged, AttitudeChanged
 from olympe.messages.ardrone3.PilotingSettingsState import MaxTiltChanged, MaxDistanceChanged, MaxAltitudeChanged, NoFlyOverMaxDistanceChanged, BankedTurnChanged
-from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed, MaxRotationSpeed, MaxPitchRollRotationSpeed
 from olympe.messages.ardrone3.SpeedSettingsState import MaxVerticalSpeedChanged, MaxRotationSpeedChanged, MaxPitchRollRotationSpeedChanged
-from olympe.messages.ardrone3.GPSSettingsState import GPSFixStateChanged
-from olympe.messages.ardrone3.GPSState import NumberOfSatelliteChanged
-from olympe.messages.skyctrl.CoPiloting import setPilotingSource
-from olympe.messages.skyctrl.CoPilotingState import pilotingSource
-from olympe.messages.skyctrl.Common import AllStates
-from olympe.messages.skyctrl.CommonState import AllStatesChanged
-from olympe.messages import gimbal, camera, mapper
+
+from olympe.messages import mapper
 from olympe.enums.mapper import button_event
-from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 
 from scipy.spatial.transform import Rotation as R
 
-from dynamic_reconfigure.server import Server
-from olympe_bridge.cfg import setAnafiConfig
-from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
+from olympe_bridge.msg import SkyControllerCommand, Float32Stamped
+from cv_bridge import CvBridge
+
+from dataclasses import dataclass
+
+olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
+DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 
 
 class AnafiBridgePublisher:
@@ -51,8 +44,8 @@ class AnafiBridgePublisher:
       ) -> None:
 
     # Initializing node
-    rospy.init_node("anafi_publisher_node")
-    self.rate = rospy.Rate(config.node_rate)
+    # rospy.init_node("anafi_publisher_node")
+    # self.rate = rospy.Rate(config.node_rate)
     rospy.on_shutdown(self._stop)
 
     # Initializing reference to connected drone
@@ -68,7 +61,7 @@ class AnafiBridgePublisher:
     # Initializing publishers
     self.pub_image = rospy.Publisher("/anafi/image", Image, queue_size=1)
     self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
-    self.pub_attitude = rospy.Publisher("/anafi/attitude", queue_size=1)
+    self.pub_attitude = rospy.Publisher("/anafi/attitude", Quaternion, queue_size=1)
     self.pub_gnss_location = rospy.Publisher("/anafi/gnss_location", NavSatFix, queue_size=1)
     self.pub_height = rospy.Publisher("/anafi/height", Float32Stamped, queue_size=1)
     self.pub_optical_flow_velocities = rospy.Publisher("/anafi/optical_flow_velocities", Vector3Stamped, queue_size=1)
@@ -87,6 +80,7 @@ class AnafiBridgePublisher:
 
     # Initialize the eventlistener
     self.every_event_listener = EveryEventListener(self.anafi, self)
+    self.every_event_listener.subscribe()
 
 
   def _stop(self) -> None:
@@ -118,7 +112,7 @@ class AnafiBridgePublisher:
     self.frame_queue.put_nowait(yuv_frame)
 
 
-  def _flush_cb(self) -> bool:
+  def _flush_cb(self, _) -> bool:
     with self.flush_queue_lock:
       while not self.frame_queue.empty():
         self.frame_queue.get_nowait().unref()
@@ -328,92 +322,103 @@ class AnafiBridgePublisher:
 
 
   def run(self) -> None:
-    rospy.logdebug('MaxTilt = %f [%f, %f]', self.drone.get_state(MaxTiltChanged)["current"], self.drone.get_state(MaxTiltChanged)["min"], self.drone.get_state(MaxTiltChanged)["max"])
-    rospy.logdebug('MaxVerticalSpeed = %f [%f, %f]', self.drone.get_state(MaxVerticalSpeedChanged)["current"], self.drone.get_state(MaxVerticalSpeedChanged)["min"], self.drone.get_state(MaxVerticalSpeedChanged)["max"])
-    rospy.logdebug('MaxRotationSpeed = %f [%f, %f]', self.drone.get_state(MaxRotationSpeedChanged)["current"], self.drone.get_state(MaxRotationSpeedChanged)["min"], self.drone.get_state(MaxRotationSpeedChanged)["max"])
-    rospy.logdebug('MaxPitchRollRotationSpeed = %f [%f, %f]', self.drone.get_state(MaxPitchRollRotationSpeedChanged)["current"], self.drone.get_state(MaxPitchRollRotationSpeedChanged)["min"], self.drone.get_state(MaxPitchRollRotationSpeedChanged)["max"])
-    rospy.logdebug('MaxDistance = %f [%f, %f]', self.drone.get_state(MaxDistanceChanged)["current"], self.drone.get_state(MaxDistanceChanged)["min"], self.drone.get_state(MaxDistanceChanged)["max"])
-    rospy.logdebug('MaxAltitude = %f [%f, %f]', self.drone.get_state(MaxAltitudeChanged)["current"], self.drone.get_state(MaxAltitudeChanged)["min"], self.drone.get_state(MaxAltitudeChanged)["max"])
-    rospy.logdebug('NoFlyOverMaxDistance = %i', self.drone.get_state(NoFlyOverMaxDistanceChanged)["shouldNotFlyOver"])
-    rospy.logdebug('BankedTurn = %i', self.drone.get_state(BankedTurnChanged)["state"])
+    rospy.logdebug('MaxTilt = %f [%f, %f]', self.anafi.drone.get_state(MaxTiltChanged)["current"], self.anafi.drone.get_state(MaxTiltChanged)["min"], self.anafi.drone.get_state(MaxTiltChanged)["max"])
+    rospy.logdebug('MaxVerticalSpeed = %f [%f, %f]', self.anafi.drone.get_state(MaxVerticalSpeedChanged)["current"], self.anafi.drone.get_state(MaxVerticalSpeedChanged)["min"], self.anafi.drone.get_state(MaxVerticalSpeedChanged)["max"])
+    rospy.logdebug('MaxRotationSpeed = %f [%f, %f]', self.anafi.drone.get_state(MaxRotationSpeedChanged)["current"], self.anafi.drone.get_state(MaxRotationSpeedChanged)["min"], self.anafi.drone.get_state(MaxRotationSpeedChanged)["max"])
+    rospy.logdebug('MaxPitchRollRotationSpeed = %f [%f, %f]', self.anafi.drone.get_state(MaxPitchRollRotationSpeedChanged)["current"], self.anafi.drone.get_state(MaxPitchRollRotationSpeedChanged)["min"], self.anafi.drone.get_state(MaxPitchRollRotationSpeedChanged)["max"])
+    rospy.logdebug('MaxDistance = %f [%f, %f]', self.anafi.drone.get_state(MaxDistanceChanged)["current"], self.anafi.drone.get_state(MaxDistanceChanged)["min"], self.anafi.drone.get_state(MaxDistanceChanged)["max"])
+    rospy.logdebug('MaxAltitude = %f [%f, %f]', self.anafi.drone.get_state(MaxAltitudeChanged)["current"], self.anafi.drone.get_state(MaxAltitudeChanged)["min"], self.anafi.drone.get_state(MaxAltitudeChanged)["max"])
+    rospy.logdebug('NoFlyOverMaxDistance = %i', self.anafi.drone.get_state(NoFlyOverMaxDistanceChanged)["shouldNotFlyOver"])
+    rospy.logdebug('BankedTurn = %i', self.anafi.drone.get_state(BankedTurnChanged)["state"])
     
     i = 0
     min_iterations = 19
     prev_attitude = None
 
     while not rospy.is_shutdown():
-      connection = self.drone.connection_state()
+      connection = self.anafi.drone.connection_state()
       if connection == False:
         # Discontinue if lost connection
         rospy.logerr("Connection lost")
+        self._flush_cb()
         break
 
-      if i >= min_iterations:
-        att_euler = self.drone.get_state(AttitudeChanged)
+      # if i >= min_iterations:
+      #   att_euler = self.anafi.drone.get_state(AttitudeChanged)
 
-        roll = att_euler["roll"]     
-        pitch = att_euler["pitch"]    
-        yaw = att_euler["yaw"]  
+      #   roll = att_euler["roll"]     
+      #   pitch = att_euler["pitch"]    
+      #   yaw = att_euler["yaw"]  
 
-        # Check if new 5 Hz data has arrived
-        if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
-          prev_attitude = [roll, pitch, yaw]
+      #   # print(prev_attitude)
+      #   # print([roll, pitch, yaw])
+      #   # print(self.anafi.drone.get_state(SpeedChanged))
 
-          # Check if new telemetry
-          pos_dot_ned = self.drone.get_state(SpeedChanged)
-          velocity_ned = np.array(
-            [
-              [pos_dot_ned["speedX"]], 
-              [pos_dot_ned["speedY"]], 
-              [pos_dot_ned["speedZ"]]
-            ]
-          )
+      #   # Check if new 5 Hz data has arrived
+      #   if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
+      #     print(2)
+      #     prev_attitude = [roll, pitch, yaw]
 
-          def Rx(radians):
-            c = np.cos(radians)
-            s = np.sin(radians)
+      #     # Check if new telemetry
+      #     pos_dot_ned = self.anafi.drone.get_state(SpeedChanged)
+      #     velocity_ned = np.array(
+      #       [
+      #         [pos_dot_ned["speedX"]], 
+      #         [pos_dot_ned["speedY"]], 
+      #         [pos_dot_ned["speedZ"]]
+      #       ]
+      #     )
 
-            return np.array([[1, 0, 0],
-                    [0, c, -s],
-                    [0, s, c]])
+      #     def Rx(radians):
+      #       c = np.cos(radians)
+      #       s = np.sin(radians)
 
-          def Ry(radians):
-            c = np.cos(radians)
-            s = np.sin(radians)
+      #       return np.array([[1, 0, 0],
+      #               [0, c, -s],
+      #               [0, s, c]])
 
-            return np.array([[c, 0, s],
-                    [0, 1, 0],
-                    [-s, 0, c]])
+      #     def Ry(radians):
+      #       c = np.cos(radians)
+      #       s = np.sin(radians)
 
-          def Rz(radians):
-            c = np.cos(radians)
-            s = np.sin(radians)
+      #       return np.array([[c, 0, s],
+      #               [0, 1, 0],
+      #               [-s, 0, c]])
 
-            return np.array([[c, -s, 0],
-                    [s, c, 0],
-                    [0, 0, 1]])
+      #     def Rz(radians):
+      #       c = np.cos(radians)
+      #       s = np.sin(radians)
 
-          # Tried to use scipy's rotaion-matrix, but wouldn't get quite right...
-          # R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
-          R_ned_to_body = Rx(roll).T @ Ry(pitch).T @ Rz(yaw).T
+      #       return np.array([[c, -s, 0],
+      #               [s, c, 0],
+      #               [0, 0, 1]])
 
-          velocity_body = R_ned_to_body @ velocity_ned
+      #     # Tried to use scipy's rotaion-matrix, but wouldn't get quite right...
+      #     # R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
+      #     print(3)
+      #     R_ned_to_body = Rx(roll).T @ Ry(pitch).T @ Rz(yaw).T
 
-          twist_stamped = TwistStamped()
-          twist_stamped.header.stamp = rospy.Time.now()
-          twist_stamped.twist.linear.x = velocity_body[0]
-          twist_stamped.twist.linear.y = velocity_body[1]
-          twist_stamped.twist.linear.z = velocity_body[2]
-          self.pub_polled_velocities.publish(twist_stamped)
+      #     velocity_body = R_ned_to_body @ velocity_ned
+
+      #     twist_stamped = TwistStamped()
+      #     twist_stamped.header.stamp = rospy.Time.now()
+      #     twist_stamped.twist.linear.x = velocity_body[0]
+      #     twist_stamped.twist.linear.y = velocity_body[1]
+      #     twist_stamped.twist.linear.z = velocity_body[2]
+      #     print(4)
+      #     self.pub_polled_velocities.publish(twist_stamped)
+      #     print(5) # 
           
-          i = 0
-      else:
-        i += 1
+      #     i = 0
+      # else:
+      #   i += 1
 
       with self.flush_queue_lock:
         try:					
           yuv_frame = self.frame_queue.get(timeout=0.01)
+          print(yuv_frame)
         except queue.Empty:
+          print("queue_empty")
           continue
         
         try:
@@ -426,12 +431,12 @@ class AnafiBridgePublisher:
           # Unref the yuv frame to avoid starving the video buffer pool
           yuv_frame.unref()
                 
-      self.rate.sleep()
+      rospy.sleep(0.009)
 
 
 class EveryEventListener(olympe.EventListener):
   def __init__(self, anafi, anafi_bridge_publisher) -> None:
-    super().__init__(anafi)
+    super().__init__(anafi.drone)
     self.anafi = anafi
     self.anafi_bridge_publisher = anafi_bridge_publisher
     self.msg_rpyt = SkyControllerCommand()

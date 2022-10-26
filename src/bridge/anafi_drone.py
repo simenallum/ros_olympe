@@ -16,9 +16,6 @@ from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 
-olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
-DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
-
 
 class Anafi(threading.Thread):
   def __init__(
@@ -27,8 +24,8 @@ class Anafi(threading.Thread):
       ) -> None:
 
     # Initializing node
-    rospy.init_node("anafi_node")
-    self.rate = rospy.Rate(anafi_config.drone_ip)
+    # rospy.init_node("anafi_node")
+    # self.rate = rospy.Rate(anafi_config.drone_ip)
 
     # Initializing drone connection
     self.drone_ip = rospy.get_param("drone_ip")
@@ -41,20 +38,31 @@ class Anafi(threading.Thread):
     
     # Initialize connection to drone
     self._connect_to_drone()
+    self._initialize_piloting_source()
 
 
   def _connect_to_drone(self) -> None:
-    self.every_event_listener.subscribe()
+    # self.every_event_listener.subscribe()
     
     while True:
       rospy.loginfo("CONNECTING")
-      connection = self.drone.connect_to_drone()
+      connection = self.drone.connect()
       if connection:
         rospy.loginfo("CONNECTED TO DRONE")
         break
       if rospy.is_shutdown():
         exit()
       rospy.sleep(1)
+
+
+  def _initialize_piloting_source(self) -> None:
+    if self.drone_ip == "192.168.53.1":
+      rospy.loginfo("Setting piloting source to Olympe")
+      assert self.drone(
+        setPilotingSource(source="Controller")
+      ).wait().success(), "Failed to set piloting source to Olympe"
+    else:
+      rospy.logwarn("Piloting source not initialized")
 
 
   def _disconnect(self) -> None:
@@ -131,7 +139,7 @@ class Anafi(threading.Thread):
 
 
   def run(self):     
-    rate = rospy.Rate(50)
+    # rate = rospy.Rate(50)
     while not rospy.is_shutdown():
       connection = self.drone.connection_state()
       if connection == False:
@@ -139,4 +147,4 @@ class Anafi(threading.Thread):
         rospy.logfatal("Lost connection to the drone")
         break
 
-      rate.sleep()
+      # rate.sleep()
