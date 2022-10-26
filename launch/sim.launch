@@ -12,5 +12,5 @@
 
 	<param name="drone_ip" type="string" value="10.202.0.1" />
 
-	<node name="anafi_bridge" pkg="olympe_bridge" type="anafi_bridge.py" output="screen"/>
+	<node name="anafi_bridge" pkg="olympe_bridge" type="spin_bridge.py" output="screen"/>
 </launch>
