@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 import rospy
 import os
 import threading
 import olympe
 import numpy as np
-
 
 from olympe.messages.ardrone3.PilotingSettings import MaxTilt, MaxDistance, MaxAltitude, NoFlyOverMaxDistance, BankedTurn
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed, MaxRotationSpeed, MaxPitchRollRotationSpeed

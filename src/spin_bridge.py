@@ -4,15 +4,10 @@ import rospy
 import traceback
 import multiprocessing
 
-# from bridge import anafi_drone
-# from bridge import anafi_listener
-# from bridge import anafi_publisher
-print(0)
 import bridge.anafi_drone as anafi_drone
 import bridge.anafi_listener as anafi_listener
 import bridge.anafi_publisher as anafi_publisher
 
-print(1)
 from dataclasses import dataclass
 
 @dataclass
