@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 import rospy
 import cv2
@@ -18,7 +18,6 @@ from std_msgs.msg import UInt8, UInt16, UInt32, Int8, Float32, Float64, String, 
 from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion, Twist, Vector3
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, NavSatFix, NavSatStatus
-from cv_bridge import CvBridge, CvBridgeError
 
 from olympe.messages.drone_manager import connection_state
 from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy, moveTo
