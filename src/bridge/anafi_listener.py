@@ -88,20 +88,14 @@ class AnafiBridgeListener:
     rpyt_msg.gaz = 0
 
     self.rpyt_callback(rpyt_msg)
-
-    # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
-    self.anafi.drone(mapper.grab(buttons=(0<<0|0<<1|0<<2|1<<3), axes=0)).wait() # bitfields
-    self.anafi.drone(setPilotingSource(source="SkyController")).wait()
-    rospy.loginfo("Control: Manual")
+    self.anafi.switch_manual()
 
 
   def _switch_offboard(self) -> None:
     # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
     # axis: 	0 = yaw, 1 = trottle, 2 = roll, 3 = pithch, 4 = camera, 5 = zoom
     if self.anafi.drone.get_state(pilotingSource)["source"] == PilotingSource_Source.SkyController:
-      self.anafi.drone(mapper.grab(buttons=(1<<0|0<<1|1<<2|1<<3), axes=(1<<0|1<<1|1<<2|1<<3|0<<4|0<<5))) # bitfields
-      self.anafi.drone(setPilotingSource(source="Controller")).wait()
-      rospy.loginfo("Control: Offboard")
+      self.anafi.switch_offboard()
     else:
       self._switch_manual()
 

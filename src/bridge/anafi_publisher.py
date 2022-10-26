@@ -53,17 +53,17 @@ DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
 class AnafiBridgePublisher:
   def __init__(
         self, 
-        drone     : olympe.Drone, 
-        node_rate : int, 
-        config    : AnafiConfig
+        anafi, 
+        config    
       ) -> None:
 
     # Initializing node
     rospy.init_node("anafi_publisher_node")
-    self.rate = rospy.Rate(node_rate)
+    self.rate = rospy.Rate(config.node_rate)
+    rospy.on_shutdown(self._stop)
 
     # Initializing reference to connected drone
-    self.drone = drone
+    self.anafi = anafi
 
     # Initializing parameters
     self.config = config
@@ -92,21 +92,32 @@ class AnafiBridgePublisher:
     self.pub_polled_velocities = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
     self._initialize_qualisys_cb()
 
+    # Initialize the eventlistener
+    self.every_event_listener = EveryEventListener(self.anafi, self)
+
+
+  def _stop(self) -> None:
+    self.pub_state.publish("DISCONNECTING")
+    self.every_event_listener.unsubscribe()
+    self.anafi.drone.streaming.stop()
+    self.anafi.drone.disconnect()
+    self.pub_state.publish("DISCONNECTED")
+
 
   def _initialize_video_stream(self) -> None:
     self.frame_queue = queue.Queue()
     self.flush_queue_lock = threading.Lock()
 
     if DRONE_RTSP_PORT is not None:
-      self.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
+      self.anafi.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
 
     # Setup the callback functions to do some live video processing
-    self.drone.streaming.set_callbacks(
+    self.anafi.drone.streaming.set_callbacks(
       raw_cb=self._yuv_frame_cb,
       flush_raw_cb=self._flush_cb
     )
 
-    self.drone.streaming.start()
+    self.anafi.drone.streaming.start()
 
 
   def _yuv_frame_cb(self, yuv_frame) -> None:  
