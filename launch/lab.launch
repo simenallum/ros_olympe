@@ -1,10 +1,12 @@
 <?xml version="1.0"?>
 
 <launch>
+	<arg name="use_manual_control" default="false"/>
 	<arg name="qualisys_available" default="true"/>
 
 	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
-	
+	<param name="use_manual_control" type="boolean" value="$(arg use_manual_control)" />
+
 	<!-- Testing on the lab indicates that the cmds are correct in the real world. Note that more testing is required  -->
 	<param name="roll_cmd_scale" type="double" value="1.0" />
 	<param name="pitch_cmd_scale" type="double" value="1.0" />

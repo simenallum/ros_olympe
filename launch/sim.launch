@@ -1,7 +1,11 @@
 <?xml version="1.0"?>
 
 <launch>
-	<arg name="qualisys_available" default="false"/> <!-- This has to be set to False when using sim -->
+	<arg name="use_manual_control" default="false"/>
+	<arg name="qualisys_available" default="false"/>
+
+	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
+	<param name="use_manual_control" type="boolean" value="$(arg use_manual_control)" />
 
 	<!-- Testing in the sim indicates that the cmds must be halved for roll and pitch  -->
 	<param name="roll_cmd_scale" type="double" value="0.5" />
