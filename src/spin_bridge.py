@@ -46,27 +46,21 @@ def get_anafi_config_params() -> None:
 
 
 def main():
-  print(2)
   rospy.init_node("anafi_bridge")
   anafi_config = get_anafi_config_params()
   
-  print(3)
   try:
     anafi = anafi_drone.Anafi(anafi_config)	
     anafi_ref = anafi.get_anafi_reference()
-
-    print(4)
     
     anafi_bridge_listener = anafi_listener.AnafiBridgeListener(anafi_ref, anafi_config)
     anafi_bridge_publisher = anafi_publisher.AnafiBridgePublisher(anafi_ref, anafi_config)
 
-    print(5)
-
     multiprocessing.Process(target=anafi_bridge_listener.run).start()
     multiprocessing.Process(target=anafi_bridge_publisher.run).start()
     
-    print(6)
     rospy.spin()
+    
   except rospy.ROSInterruptException:
     traceback.print_exc()
     pass
