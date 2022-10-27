@@ -3,6 +3,7 @@
 import rospy
 import traceback
 import multiprocessing
+import threading
 
 import bridge.anafi_drone as anafi_drone
 import bridge.anafi_listener as anafi_listener
@@ -56,8 +57,15 @@ def main():
     anafi_bridge_listener = anafi_listener.AnafiBridgeListener(anafi_ref, anafi_config)
     anafi_bridge_publisher = anafi_publisher.AnafiBridgePublisher(anafi_ref, anafi_config)
 
-    multiprocessing.Process(target=anafi_bridge_listener.run).start()
-    multiprocessing.Process(target=anafi_bridge_publisher.run).start()
+    # Threading is theoretically less efficient than multiprocessing, as the former will not
+    # support concurrent processing due to the global interpreter lock. 
+    # The multiprocessing module in python, will support true concurrent programming, as one 
+    # would expect from an actual programming language such as C++. The downside of using it,
+    # is that the memory is copied into each process. This meansthat the entire program 
+    # would have to be rewritten in a more clever way, to circumvent the problems arising
+    # when copying the memory...  
+    threading.Thread(target=anafi_bridge_listener.run, args=(), daemon=True).start()
+    threading.Thread(target=anafi_bridge_publisher.run, args=(), daemon=True).start()
     
     rospy.spin()
     
