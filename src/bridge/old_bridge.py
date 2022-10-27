@@ -36,6 +36,8 @@ from olympe.messages import gimbal, camera, mapper
 from olympe.enums.mapper import button_event
 from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 
+from cv_bridge import CvBridge
+
 from scipy.spatial.transform import Rotation as R
 
 from dynamic_reconfigure.server import Server
