@@ -1,9 +1,6 @@
 #!/usr/bin/python3
 
 import rospy
-import cv2
-import os
-import olympe
 
 from std_msgs.msg import Float64, Empty, Bool
 
@@ -16,7 +13,6 @@ from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 from scipy.spatial.transform import Rotation as R
 
 from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand
-from cv_bridge import CvBridge
 
 
 class AnafiBridgeListener:
@@ -25,19 +21,12 @@ class AnafiBridgeListener:
         anafi, 
         config    
       ) -> None:
-    
-    # # Initializing node
-    # rospy.init_node("drone_publisher_node")
-    # self.rate = rospy.Rate(config.node_rate)
 
     # Initializing reference to connected drone
     self.anafi = anafi
 
     # Initializing config-parameters
     self.config = config
-
-    # Initialize control mode
-    # self._initialize_control_mode()
 
     # Initializing subscribers
     rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
@@ -51,15 +40,6 @@ class AnafiBridgeListener:
 
     # Initializing publishers
     self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
-
-
-  # def _initialize_control_mode(self) -> None:
-  #   if self.config.use_manual_control:
-  #     rospy.loginfo("Manual control enabled")
-  #     self._switch_manual()
-  #   else:
-  #     rospy.loginfo("Control via code-commands enabled")
-  #     self._switch_offboard()
 
 
   def _bound(
@@ -143,10 +123,10 @@ class AnafiBridgeListener:
     self.anafi.drone(
       PCMD( 
         flag=1,
-        roll=int(self._bound_percentage(self.config.roll_cmd_scale * msg.roll / self.anafi.max_tilt * 100)),      			  # roll [-100, 100] (% of max tilt)
+        roll=int(self._bound_percentage(self.config.roll_cmd_scale * msg.roll / self.anafi.max_tilt * 100)),      			# roll [-100, 100] (% of max tilt)
         pitch=int(self._bound_percentage(-self.config.pitch_cmd_scale * msg.pitch / self.anafi.max_tilt * 100)),   		  # pitch [-100, 100] (% of max tilt)
-        yaw=int(self._bound_percentage(msg.yaw / self.anafi.max_rotation_speed * 100)), 												  # yaw rate [-100, 100] (% of max yaw rate)
-        gaz=int(self._bound_percentage(-self.config.thrust_cmd_scale * msg.gaz / self.anafi.max_vertical_speed * 100)),  # vertical speed [-100, 100] (% of max vertical speed)
+        yaw=int(self._bound_percentage(msg.yaw / self.anafi.max_rotation_speed * 100)), 												        # yaw rate [-100, 100] (% of max yaw rate)
+        gaz=int(self._bound_percentage(-self.config.thrust_cmd_scale * msg.gaz / self.anafi.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
         timestampAndSeqNum=0
       )
     ) 
@@ -178,11 +158,11 @@ class AnafiBridgeListener:
 
   def camera_callback(self, msg : CameraCommand) -> None:
     if msg.action & 0b001: # take picture
-      self.anafi.drone(camera.take_photo(cam_id=0)) # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
+      self.anafi.drone(camera.take_photo(cam_id=0))             # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
     if msg.action & 0b010: # start recording
       self.anafi.drone(camera.start_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.start_recording
     if msg.action & 0b100: # stop recording
-      self.anafi.drone(camera.stop_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
+      self.anafi.drone(camera.stop_recording(cam_id=0)).wait()  # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
 
     rospy.loginfo("Received camera command")
 
@@ -217,9 +197,3 @@ class AnafiBridgeListener:
         # Lost connection
         rospy.logfatal("Lost connection to the drone")
         break
-
-        # Nothing to do with no connection. Responsibility of another process to 
-        # establish the connection again
-        # Wish this was Elixir though... Supervisors <3  
-
-      # self.rate.sleep()
