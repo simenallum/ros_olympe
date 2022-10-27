@@ -1,8 +1,6 @@
 #!/usr/bin/python3
 
 import rospy
-import os
-import threading
 import olympe
 import numpy as np
 
@@ -17,15 +15,11 @@ from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 
 
-class Anafi(threading.Thread):
+class Anafi:
   def __init__(
         self,
         anafi_config
       ) -> None:
-
-    # Initializing node
-    # rospy.init_node("anafi_node")
-    # self.rate = rospy.Rate(anafi_config.drone_ip)
 
     # Initializing drone connection
     self.drone_ip = rospy.get_param("drone_ip")
@@ -41,9 +35,7 @@ class Anafi(threading.Thread):
     self._initialize_piloting_source()
 
 
-  def _connect_to_drone(self) -> None:
-    # self.every_event_listener.subscribe()
-    
+  def _connect_to_drone(self) -> None:    
     while True:
       rospy.loginfo("CONNECTING")
       connection = self.drone.connect()
@@ -67,7 +59,6 @@ class Anafi(threading.Thread):
 
   def _disconnect(self) -> None:
     rospy.loginfo("DISCONNECTING")
-    # self.every_event_listener.unsubscribe()
     self.drone.streaming.stop()
     self.drone.disconnect()
     rospy.loginfo("DISCONNECTED")
@@ -98,7 +89,7 @@ class Anafi(threading.Thread):
           gimbal_id=0,
           yaw=0, 
           pitch=config['max_gimbal_speed'], # [1 180] (deg/s)
-          roll=config['max_gimbal_speed'] # [1 180] (deg/s)
+          roll=config['max_gimbal_speed']   # [1 180] (deg/s)
         )
       ).wait()
     return config
@@ -138,13 +129,10 @@ class Anafi(threading.Thread):
       self.switch_manual()
 
 
-  def run(self):     
-    # rate = rospy.Rate(50)
+  def run(self) -> None:     
     while not rospy.is_shutdown():
       connection = self.drone.connection_state()
       if connection == False:
         # Lost connection
         rospy.logfatal("Lost connection to the drone")
         break
-
-      # rate.sleep()
