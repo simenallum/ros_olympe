@@ -43,11 +43,6 @@ class AnafiBridgePublisher:
         config    
       ) -> None:
 
-    # Initializing node
-    # rospy.init_node("anafi_publisher_node")
-    # self.rate = rospy.Rate(config.node_rate)
-    rospy.on_shutdown(self._stop)
-
     # Initializing reference to connected drone
     self.anafi = anafi
 
@@ -61,7 +56,7 @@ class AnafiBridgePublisher:
     # Initializing publishers
     self.pub_image = rospy.Publisher("/anafi/image", Image, queue_size=1)
     self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
-    self.pub_attitude = rospy.Publisher("/anafi/attitude", Quaternion, queue_size=1)
+    self.pub_attitude = rospy.Publisher("/anafi/attitude", QuaternionStamped, queue_size=1)
     self.pub_gnss_location = rospy.Publisher("/anafi/gnss_location", NavSatFix, queue_size=1)
     self.pub_height = rospy.Publisher("/anafi/height", Float32Stamped, queue_size=1)
     self.pub_optical_flow_velocities = rospy.Publisher("/anafi/optical_flow_velocities", Vector3Stamped, queue_size=1)
@@ -83,20 +78,12 @@ class AnafiBridgePublisher:
     self.every_event_listener.subscribe()
 
 
-  def _stop(self) -> None:
-    self.pub_state.publish("DISCONNECTING")
-    self.every_event_listener.unsubscribe()
-    self.anafi.drone.streaming.stop()
-    self.anafi.drone.disconnect()
-    self.pub_state.publish("DISCONNECTED")
-
-
   def _initialize_video_stream(self) -> None:
     self.frame_queue = queue.Queue()
     self.flush_queue_lock = threading.Lock()
 
     if DRONE_RTSP_PORT is not None:
-      self.anafi.drone.streaming.server_addr = rospy.get_param("drone_ip") + f":{DRONE_RTSP_PORT}"
+      self.anafi.drone.streaming.server_addr = self.config.drone_ip + f":{DRONE_RTSP_PORT}"
 
     # Setup the callback functions to do some live video processing
     self.anafi.drone.streaming.set_callbacks(
@@ -108,6 +95,7 @@ class AnafiBridgePublisher:
 
 
   def _yuv_frame_cb(self, yuv_frame) -> None:  
+    # with self.flush_queue_lock: # Uncertain whether the lock is necessary
     yuv_frame.ref()
     self.frame_queue.put_nowait(yuv_frame)
 
@@ -337,88 +325,90 @@ class AnafiBridgePublisher:
 
     while not rospy.is_shutdown():
       connection = self.anafi.drone.connection_state()
-      if connection == False:
+      if not connection:
         # Discontinue if lost connection
-        rospy.logerr("Connection lost")
-        self._flush_cb()
+        rospy.logfatal("Connection lost")
+        self._flush_cb(None)
         break
 
-      # if i >= min_iterations:
-      #   att_euler = self.anafi.drone.get_state(AttitudeChanged)
+      if i >= min_iterations:
+        att_euler = self.anafi.drone.get_state(AttitudeChanged)
 
-      #   roll = att_euler["roll"]     
-      #   pitch = att_euler["pitch"]    
-      #   yaw = att_euler["yaw"]  
+        roll = att_euler["roll"]     
+        pitch = att_euler["pitch"]    
+        yaw = att_euler["yaw"]  
 
-      #   # print(prev_attitude)
-      #   # print([roll, pitch, yaw])
-      #   # print(self.anafi.drone.get_state(SpeedChanged))
+        # Check if new 5 Hz data has arrived
+        if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
+          prev_attitude = [roll, pitch, yaw]
 
-      #   # Check if new 5 Hz data has arrived
-      #   if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
-      #     print(2)
-      #     prev_attitude = [roll, pitch, yaw]
+          # Check if new telemetry
+          pos_dot_ned = self.anafi.drone.get_state(SpeedChanged)
+          velocity_ned = np.array(
+            [
+              [pos_dot_ned["speedX"]], 
+              [pos_dot_ned["speedY"]], 
+              [pos_dot_ned["speedZ"]]
+            ]
+          )
 
-      #     # Check if new telemetry
-      #     pos_dot_ned = self.anafi.drone.get_state(SpeedChanged)
-      #     velocity_ned = np.array(
-      #       [
-      #         [pos_dot_ned["speedX"]], 
-      #         [pos_dot_ned["speedY"]], 
-      #         [pos_dot_ned["speedZ"]]
-      #       ]
-      #     )
+          def Rx(radians):
+            c = np.cos(radians)
+            s = np.sin(radians)
 
-      #     def Rx(radians):
-      #       c = np.cos(radians)
-      #       s = np.sin(radians)
+            return np.array(
+              [
+                [1, 0, 0],
+                [0, c, -s],
+                [0, s, c]
+              ]
+            )
 
-      #       return np.array([[1, 0, 0],
-      #               [0, c, -s],
-      #               [0, s, c]])
+          def Ry(radians):
+            c = np.cos(radians)
+            s = np.sin(radians)
 
-      #     def Ry(radians):
-      #       c = np.cos(radians)
-      #       s = np.sin(radians)
+            return np.array(
+              [
+                [c, 0, s],
+                [0, 1, 0],
+                [-s, 0, c]
+              ]
+            )
 
-      #       return np.array([[c, 0, s],
-      #               [0, 1, 0],
-      #               [-s, 0, c]])
+          def Rz(radians):
+            c = np.cos(radians)
+            s = np.sin(radians)
 
-      #     def Rz(radians):
-      #       c = np.cos(radians)
-      #       s = np.sin(radians)
+            return np.array(
+              [
+                [c, -s, 0],
+                [s, c, 0],
+                [0, 0, 1]
+              ]
+            )
 
-      #       return np.array([[c, -s, 0],
-      #               [s, c, 0],
-      #               [0, 0, 1]])
+          # Tried to use scipy's rotation-matrix, but wouldn't get quite right...
+          # R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
+          R_ned_to_body = Rx(roll).T @ Ry(pitch).T @ Rz(yaw).T
 
-      #     # Tried to use scipy's rotaion-matrix, but wouldn't get quite right...
-      #     # R_scipy = R.from_euler('zyx', [roll, pitch, yaw], degrees=False).as_matrix()
-      #     print(3)
-      #     R_ned_to_body = Rx(roll).T @ Ry(pitch).T @ Rz(yaw).T
+          velocity_body = R_ned_to_body @ velocity_ned
 
-      #     velocity_body = R_ned_to_body @ velocity_ned
-
-      #     twist_stamped = TwistStamped()
-      #     twist_stamped.header.stamp = rospy.Time.now()
-      #     twist_stamped.twist.linear.x = velocity_body[0]
-      #     twist_stamped.twist.linear.y = velocity_body[1]
-      #     twist_stamped.twist.linear.z = velocity_body[2]
-      #     print(4)
-      #     self.pub_polled_velocities.publish(twist_stamped)
-      #     print(5) # 
+          twist_stamped = TwistStamped()
+          twist_stamped.header.stamp = rospy.Time.now()
+          twist_stamped.twist.linear.x = velocity_body[0]
+          twist_stamped.twist.linear.y = velocity_body[1]
+          twist_stamped.twist.linear.z = velocity_body[2]
+          self.pub_polled_velocities.publish(twist_stamped)
           
-      #     i = 0
-      # else:
-      #   i += 1
+          i = 0
+      else:
+        i += 1
 
       with self.flush_queue_lock:
         try:					
           yuv_frame = self.frame_queue.get(timeout=0.01)
-          print(yuv_frame)
         except queue.Empty:
-          print("queue_empty")
           continue
         
         try:
