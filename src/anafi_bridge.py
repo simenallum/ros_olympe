@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 import rospy
 import cv2
@@ -10,14 +10,14 @@ import traceback
 import math
 import olympe
 import numpy as np
+import multiprocessing
 
 import pymap3d
 
-from std_msgs.msg import UInt8, UInt16, UInt32, Int8, Float32, String, Header, Time, Empty, Bool
+from std_msgs.msg import UInt8, UInt16, UInt32, Int8, Float32, Float64, String, Header, Time, Empty, Bool
 from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion, Twist, Vector3
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, NavSatFix, NavSatStatus
-from cv_bridge import CvBridge, CvBridgeError
 
 from olympe.messages.drone_manager import connection_state
 from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy, moveTo
@@ -36,17 +36,17 @@ from olympe.messages import gimbal, camera, mapper
 from olympe.enums.mapper import button_event
 from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
 
+from cv_bridge import CvBridge
+
 from scipy.spatial.transform import Rotation as R
 
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
 
-
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
 DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
-
 
 class Anafi(threading.Thread):
 	def __init__(self):
@@ -85,6 +85,7 @@ class Anafi(threading.Thread):
 		self.pub_rpy = rospy.Publisher("/anafi/rpy", Vector3Stamped, queue_size=1)
 		self.pub_skycontroller = rospy.Publisher("/skycontroller/command", SkyControllerCommand, queue_size=1)
 		self.pub_polled_velocities = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
+		self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
 
 		rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
 		rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
@@ -200,6 +201,7 @@ class Anafi(threading.Thread):
 				self.frame_queue.get_nowait().unref()
 		return True
 
+
 	def yuv_callback(self, yuv_frame):
 		# Use OpenCV to convert the yuv frame to RGB
 		# the VideoFrame.info() dictionary contains some useful information
@@ -243,21 +245,23 @@ class Anafi(threading.Thread):
 			msg_time.data = rospy.Time(secs, nanosecs) # secs = int(frame_timestamp//1e6), nsecs = int(frame_timestamp%1e6*1e3)
 			self.pub_time.publish(msg_time)
 
-			
 			if "drone" in metadata[1]:
 				drone_quat = metadata[1]['drone']['quat'] # attitude
 				quat = [drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']]
 
 				Rot = R.from_quat(quat)
 				drone_rpy = Rot.as_euler('xyz', degrees=False)
-			
-				# Must find a better method for this
+
+				# TODO Rewrite this part to more readable code. Currenly using magic number etc.
+				# This part adds the offsets to the quaternions before it is published
 				if self.drone_ip == "192.168.53.1":
-					# TODO Rewrite this part to more readable code. Currenly using magic number etc.
-					# This part adds the offsets to the quaternions before it is published
-					drone_rpy_corrected = drone_rpy + (-0.009875596168668191, -0.006219417359313843, 0)
-					rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
-					quat = R.as_quat(rot_corrected)
+					correction_terms = (-0.015576460455065291, -0.012294590577876349, 0) #(-0.009875596168668191, -0.006219417359313843, 0)
+				else:
+					correction_terms = (-0.0002661987518324087, -0.0041069024624204534, 0)
+
+				drone_rpy_corrected = drone_rpy + correction_terms
+				rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
+				quat = R.as_quat(rot_corrected)
 
 				msg_attitude = QuaternionStamped()
 				msg_attitude.header = header
@@ -278,7 +282,11 @@ class Anafi(threading.Thread):
 						status.status = 0 	# Position fix
 
 					else:
-						# No connection
+						# No connection - setting to zero to make it explicit
+						msg_location.latitude = 0   # [deg]
+						msg_location.longitude = 0  # [deg]
+						msg_location.altitude = 0   # [m] over WGS84
+
 						status.status = -1	# No position fix
 
 				elif self.is_qualisys_available:
@@ -292,7 +300,7 @@ class Anafi(threading.Thread):
 
 				msg_location.status = status
 				self.pub_gnss_location.publish(msg_location)
-					
+
 				ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
 				height_msg = Float32Stamped()
 				height_msg.header = header
@@ -307,7 +315,7 @@ class Anafi(threading.Thread):
 				msg_speed.vector.y = speed['east']
 				msg_speed.vector.z = speed['down']
 				self.pub_optical_flow_velocities.publish(msg_speed)
-				
+
 				msg_pose = PoseStamped()
 				msg_pose.header = header
 				msg_pose.pose.position.x = msg_location.latitude
@@ -328,7 +336,7 @@ class Anafi(threading.Thread):
 				battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
 				self.pub_battery.publish(battery_percentage)
 
-				state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOWERING', 'FLYING', 'LANDING', 'EMERGENCY']
+				state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
 				self.pub_state.publish(state)
 
 			if 'links' in metadata[1]:
@@ -369,6 +377,7 @@ class Anafi(threading.Thread):
 		else:
 			rospy.logwarn("Packet lost!")
 
+
 	def takeoff_callback(self, msg : Empty) -> None:		
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
 		self.drone(TakeOff() >> FlyingStateChanged(state="hovering", _timeout=10)).wait() 
@@ -403,6 +412,11 @@ class Anafi(threading.Thread):
 		# Negative in gaz to get it into NED. gaz > 0 means negative velocity downwards
 
 		# Can I just say how much I hate that the PCMD takes the command in yaw, when it clearly is yaw rate
+
+		time_diff = (rospy.Time.now() - msg.header.stamp).to_sec()
+		latency_msg = Float64()
+		latency_msg.data = time_diff
+		self.pub_msg_latency.publish(latency_msg)
 
 		self.drone(PCMD( 
 			flag=1,
@@ -471,6 +485,7 @@ class Anafi(threading.Thread):
 	def bound_percentage(self, value):
 		return self.bound(value, -100, 100)
 
+
 	def switch_manual(self):
 		msg_rpyt = SkyControllerCommand()
 		msg_rpyt.header.stamp = rospy.Time.now()
@@ -492,6 +507,7 @@ class Anafi(threading.Thread):
 			rospy.loginfo("Control: Offboard")
 		else:
 			self.switch_manual()
+
 
 	def qualisys_callback(self, msg: PoseStamped):
 		x = msg.pose.position.x
@@ -614,13 +630,14 @@ class Anafi(threading.Thread):
 								
 			rate.sleep()
 
+
 class EveryEventListener(olympe.EventListener):
 	def __init__(self, anafi):
-		self.anafi = anafi
+		self.anafi = anafi.drone
 				
 		self.msg_rpyt = SkyControllerCommand()
 		
-		super().__init__(anafi.drone)
+		super().__init__(anafi)
 
 
 	def print_event(self, event): # Serializes an event object and truncates the result if necessary before printing it
@@ -670,6 +687,7 @@ class EveryEventListener(olympe.EventListener):
 		self.msg_rpyt.header.stamp = rospy.Time.now()
 		self.msg_rpyt.header.frame_id = '/body'
 		self.anafi.pub_skycontroller.publish(self.msg_rpyt)
+
 
 	@olympe.listen_event(AttitudeChanged(_policy="wait"))
 	def onAttitudeChanged(self, event, scheduler):
