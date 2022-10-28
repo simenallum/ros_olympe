@@ -255,7 +255,7 @@ class Anafi(threading.Thread):
 				# TODO Rewrite this part to more readable code. Currenly using magic number etc.
 				# This part adds the offsets to the quaternions before it is published
 				if self.drone_ip == "192.168.53.1":
-					correction_terms = (-0.009875596168668191, -0.006219417359313843, 0)
+					correction_terms = (-0.015576460455065291, -0.012294590577876349, 0) #(-0.009875596168668191, -0.006219417359313843, 0)
 				else:
 					correction_terms = (-0.0002661987518324087, -0.0041069024624204534, 0)
 
