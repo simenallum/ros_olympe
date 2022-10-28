@@ -3,6 +3,7 @@
 import rospy
 import olympe
 import numpy as np
+import threading
 
 from olympe.messages.ardrone3.PilotingSettings import MaxTilt, MaxDistance, MaxAltitude, NoFlyOverMaxDistance, BankedTurn
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed, MaxRotationSpeed, MaxPitchRollRotationSpeed
@@ -15,15 +16,17 @@ from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 
 
-class Anafi:
+class Anafi(threading.Thread):
   def __init__(
         self,
         anafi_config
       ) -> None:
 
+    self.config = anafi_config
+
     # Initializing drone connection
     self.drone_ip = rospy.get_param("drone_ip")
-    self.drone = olympe.Drone(anafi_config.drone_ip)
+    self.drone = olympe.Drone(self.config.drone_ip)
     
     rospy.on_shutdown(self._stop)
     
@@ -49,12 +52,18 @@ class Anafi:
 
   def _initialize_piloting_source(self) -> None:
     if self.drone_ip == "192.168.53.1":
-      rospy.loginfo("Setting piloting source to Olympe")
-      assert self.drone(
-        setPilotingSource(source="Controller")
-      ).wait().success(), "Failed to set piloting source to Olympe"
+      if self.config.use_manual_control:
+        rospy.loginfo("Setting piloting source to SkyController")
+        assert self.drone(
+          setPilotingSource(source="SkyController")
+        ).wait().success(), "Failed to set piloting source to Olympe"
+      else:
+        rospy.loginfo("Setting piloting source to Olympe")
+        assert self.drone(
+          setPilotingSource(source="Controller")
+        ).wait().success(), "Failed to set piloting source to Olympe"
     else:
-      rospy.logwarn("Piloting source not initialized")
+      rospy.logwarn("Piloting source not initialized. This should only occur in the simulator...")
 
 
   def _disconnect(self) -> None:

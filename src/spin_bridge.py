@@ -6,11 +6,16 @@ import multiprocessing
 import threading
 
 import bridge.anafi_drone as anafi_drone
-import bridge.anafi_listener as anafi_listener
-import bridge.anafi_publisher as anafi_publisher
+import bridge.anafi_cmd_listener as anafi_cmd_listener
+import bridge.anafi_data_publisher as anafi_data_publisher
 
 from dataclasses import dataclass
 
+
+"""
+May want to drop using the dataclass, and instead use rospy.get_param in the specific 
+functions where they are used
+"""
 @dataclass
 class AnafiConfig:
   node_rate : int = 1
@@ -24,7 +29,7 @@ class AnafiConfig:
   use_manual_control : bool = False
 
  
-def get_anafi_config_params() -> None:
+def get_anafi_config_params() -> AnafiConfig:
   anafi_config = AnafiConfig()
 
   anafi_config.node_rate = 100
@@ -54,8 +59,8 @@ def main():
     anafi = anafi_drone.Anafi(anafi_config)	
     anafi_ref = anafi.get_anafi_reference()
     
-    anafi_bridge_listener = anafi_listener.AnafiBridgeListener(anafi_ref, anafi_config)
-    anafi_bridge_publisher = anafi_publisher.AnafiBridgePublisher(anafi_ref, anafi_config)
+    anafi_bridge_command_listener = anafi_cmd_listener.AnafiBridgeCommandListener(anafi_ref, anafi_config)
+    anafi_bridge_data_publisher = anafi_data_publisher.AnafiBridgeDataPublisher(anafi_ref, anafi_config)
 
     # Threading is theoretically less efficient than multiprocessing, as the former will not
     # support concurrent processing due to the global interpreter lock. 
@@ -64,8 +69,8 @@ def main():
     # is that the memory is copied into each process. This meansthat the entire program 
     # would have to be rewritten in a more clever way, to circumvent the problems arising
     # when copying the memory...  
-    threading.Thread(target=anafi_bridge_listener.run, args=(), daemon=True).start()
-    threading.Thread(target=anafi_bridge_publisher.run, args=(), daemon=True).start()
+    threading.Thread(target=anafi_bridge_command_listener.run, args=(), daemon=True).start()
+    threading.Thread(target=anafi_bridge_data_publisher.run, args=(), daemon=True).start()
     
     rospy.spin()
     

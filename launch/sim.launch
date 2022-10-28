@@ -12,8 +12,6 @@
 	<param name="pitch_cmd_scale" type="double" value="0.5" />
 	<param name="thrust_cmd_scale" type="double" value="1.0" />
 
-	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
-
 	<param name="drone_ip" type="string" value="10.202.0.1" />
 
 	<node name="anafi_bridge" pkg="olympe_bridge" type="spin_bridge.py" output="screen"/>
