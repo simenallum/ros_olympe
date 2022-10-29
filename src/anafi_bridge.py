@@ -61,12 +61,18 @@ class Anafi(threading.Thread):
 			)
 		)
 
+		self.ned_origo_in_lla : np.ndarray = None
+
 		self.is_qualisys_available = rospy.get_param("/qualisys_available")
+		self.is_sim = rospy.get_param("/is_sim")
 
 		if self.is_qualisys_available:			
 			rospy.loginfo("Flying at drone lab: Qualisys is available")
 		else:
-			rospy.loginfo("Not flying at the lab: Qualisys is unavailable")
+			if self.is_sim:
+				rospy.loginfo("Flying in the simulator")
+			else:
+				rospy.loginfo("Flying a real drone outside the lab: Qualisys is not available")
 					
 		self.pub_image = rospy.Publisher("/anafi/image", Image, queue_size=1)
 		self.pub_time = rospy.Publisher("/anafi/time", Time, queue_size=1)
@@ -86,6 +92,7 @@ class Anafi(threading.Thread):
 		self.pub_skycontroller = rospy.Publisher("/skycontroller/command", SkyControllerCommand, queue_size=1)
 		self.pub_polled_velocities = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
 		self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
+		self.pub_ned_pose_from_gnss = rospy.Publisher("/anafi/ned_pose_from_gnss", PointStamped, queue_size=1)
 
 		rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
 		rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
@@ -95,18 +102,17 @@ class Anafi(threading.Thread):
 		rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self.moveTo_callback)
 		rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
 		rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
+		rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self.move_to_ned_pos_cb)		
 
 		if self.is_qualisys_available:
 			rospy.Subscriber("/qualisys/Anafi/pose", PoseStamped, self.qualisys_callback)
 			self.last_received_location = NavSatFix()
 		
 		self.drone_ip = rospy.get_param("drone_ip")
-
-		# Connect 
 		self.drone = olympe.Drone(self.drone_ip)
 		
 		# Create listener for RC events
-		self.every_event_listener = EveryEventListener(self)
+		self.every_event_listener = EveryEventListener(self.drone)
 
 		rospy.on_shutdown(self.stop)
 		
@@ -118,7 +124,7 @@ class Anafi(threading.Thread):
 		self.bridge = CvBridge()
 		
 
-	def connect(self):
+	def connect(self) -> None:
 		self.every_event_listener.subscribe()
 		
 		rate = rospy.Rate(1) # 1hz
@@ -152,7 +158,7 @@ class Anafi(threading.Thread):
 		self.drone.streaming.start()
 		
 
-	def disconnect(self):
+	def disconnect(self) -> None:
 		self.pub_state.publish("DISCONNECTING")
 		self.every_event_listener.unsubscribe()
 		self.drone.streaming.stop()
@@ -160,12 +166,12 @@ class Anafi(threading.Thread):
 		self.pub_state.publish("DISCONNECTED")
 		
 
-	def stop(self):
+	def stop(self) -> None:
 		rospy.loginfo("AnafiBridge is stopping...")
 		self.disconnect()
 
 
-	def reconfigure_callback(self, config, level):
+	def reconfigure_callback(self, config : setAnafiConfig, level : int) -> setAnafiConfig:
 		if level == -1 or level == 1:
 			self.drone(MaxTilt(config['max_tilt'])).wait() 																				# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html?#olympe.messages.ardrone3.PilotingSettings.MaxTilt
 			self.drone(MaxVerticalSpeed(config['max_vertical_speed'])).wait() 										# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxVerticalSpeed
@@ -190,19 +196,19 @@ class Anafi(threading.Thread):
 		
 
 	# This function will be called by Olympe for each decoded YUV frame.
-	def yuv_frame_cb(self, yuv_frame):  
+	def yuv_frame_cb(self, yuv_frame) -> None:  
 		yuv_frame.ref()
 		self.frame_queue.put_nowait(yuv_frame)
 
 
-	def flush_cb(self):
+	def flush_cb(self, _) -> Bool:
 		with self.flush_queue_lock:
 			while not self.frame_queue.empty():
 				self.frame_queue.get_nowait().unref()
 		return True
 
 
-	def yuv_callback(self, yuv_frame):
+	def yuv_callback(self, yuv_frame) -> None:
 		# Use OpenCV to convert the yuv frame to RGB
 		# the VideoFrame.info() dictionary contains some useful information
 		# such as the video resolution
@@ -281,6 +287,15 @@ class Anafi(threading.Thread):
 
 						status.status = 0 	# Position fix
 
+						n, e, d = self.calculate_ned_position(msg_location)
+						msg_ned_pos_from_gnss = PointStamped()
+						msg_ned_pos_from_gnss.header = header 
+						msg_ned_pos_from_gnss.point.x = n
+						msg_ned_pos_from_gnss.point.y = e 
+						msg_ned_pos_from_gnss.point.z = d 
+
+						self.pub_ned_pose_from_gnss.publish(msg_ned_pos_from_gnss)
+
 					else:
 						# No connection - setting to zero to make it explicit
 						msg_location.latitude = 0   # [deg]
@@ -339,6 +354,19 @@ class Anafi(threading.Thread):
 				state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
 				self.pub_state.publish(state)
 
+				# Log battery percentage
+				if battery_percentage >= 30:
+					if battery_percentage % 10 == 0:
+						rospy.loginfo_throttle(100, "Battery level: " + str(battery_percentage) + "%")
+				else:
+					if battery_percentage >= 20:
+						rospy.logwarn_throttle(10, "Low battery: " + str(battery_percentage) + "%")
+					else:
+						if battery_percentage >= 10:
+							rospy.logerr_throttle(1, "Critical battery: " + str(battery_percentage) + "%")
+						else:
+							rospy.logfatal_throttle(0.1, "Empty battery: " + str(battery_percentage) + "%")		
+
 			if 'links' in metadata[1]:
 				link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
 				self.pub_link_goodput.publish(link_goodput)
@@ -349,31 +377,18 @@ class Anafi(threading.Thread):
 				wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
 				self.pub_wifi_rssi.publish(wifi_rssi)
 			
-			# Log battery percentage
-			if battery_percentage >= 30:
-				if battery_percentage % 10 == 0:
-					rospy.loginfo_throttle(100, "Battery level: " + str(battery_percentage) + "%")
-			else:
-				if battery_percentage >= 20:
-					rospy.logwarn_throttle(10, "Low battery: " + str(battery_percentage) + "%")
-				else:
-					if battery_percentage >= 10:
-						rospy.logerr_throttle(1, "Critical battery: " + str(battery_percentage) + "%")
+				# Log signal strength
+				if wifi_rssi <= -60:
+					if wifi_rssi >= -70:
+						rospy.loginfo_throttle(100, "Signal strength: " + str(wifi_rssi) + "dBm")
 					else:
-						rospy.logfatal_throttle(0.1, "Empty battery: " + str(battery_percentage) + "%")		
-					
-			# Log signal strength
-			if wifi_rssi <= -60:
-				if wifi_rssi >= -70:
-					rospy.loginfo_throttle(100, "Signal strength: " + str(wifi_rssi) + "dBm")
-				else:
-					if wifi_rssi >= -80:
-						rospy.logwarn_throttle(10, "Weak signal: " + str(wifi_rssi) + "dBm")
-					else:
-						if wifi_rssi >= -90:
-							rospy.logerr_throttle(1, "Unreliable signal:" + str(wifi_rssi) + "dBm")
+						if wifi_rssi >= -80:
+							rospy.logwarn_throttle(10, "Weak signal: " + str(wifi_rssi) + "dBm")
 						else:
-							rospy.logfatal_throttle(0.1, "Unusable signal: " + str(wifi_rssi) + "dBm")
+							if wifi_rssi >= -90:
+								rospy.logerr_throttle(1, "Unreliable signal:" + str(wifi_rssi) + "dBm")
+							else:
+								rospy.logfatal_throttle(0.1, "Unusable signal: " + str(wifi_rssi) + "dBm")
 		else:
 			rospy.logwarn("Packet lost!")
 
@@ -404,19 +419,13 @@ class Anafi(threading.Thread):
 
 
 	def rpyt_callback(self, msg : AttitudeCommand) -> None:
+		time_msg_received = rospy.Time.now()
+
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.PCMD
-		
 		# Testing in the simulator shows that the roll and pitch-commands must be multiplied with 0.5
-		
 		# Negative in pitch to get it into NED
 		# Negative in gaz to get it into NED. gaz > 0 means negative velocity downwards
-
 		# Can I just say how much I hate that the PCMD takes the command in yaw, when it clearly is yaw rate
-
-		time_diff = (rospy.Time.now() - msg.header.stamp).to_sec()
-		latency_msg = Float64()
-		latency_msg.data = time_diff
-		self.pub_msg_latency.publish(latency_msg)
 
 		self.drone(PCMD( 
 			flag=1,
@@ -426,8 +435,13 @@ class Anafi(threading.Thread):
 			gaz=int(self.bound_percentage(-self.thrust_cmd_scale * msg.gaz / self.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
 			timestampAndSeqNum=0)) # for debug only
 
+		time_diff = (time_msg_received - msg.header.stamp).to_sec()
+		latency_msg = Float64()
+		latency_msg.data = time_diff
+		self.pub_msg_latency.publish(latency_msg)
 
-	def moveBy_callback(self, msg : moveBy) -> None:		
+
+	def moveBy_callback(self, msg : MoveByCommand) -> None:		
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveBy
 		self.drone(moveBy(
 			dX=msg.dx, # displacement along the front axis (m)
@@ -438,7 +452,7 @@ class Anafi(threading.Thread):
 		).wait().success()
 	
 
-	def moveTo_callback(self, msg : moveTo) -> None:		
+	def moveTo_callback(self, msg : MoveToCommand) -> None:		
 		# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveTo
 		self.drone(moveTo( 
 			latitude=msg.latitude, # latitude (degrees)
@@ -446,6 +460,42 @@ class Anafi(threading.Thread):
 			altitude=msg.altitude, # altitude (m)
 			heading=msg.heading, # heading relative to the North (degrees)
 			orientation_mode=msg.orientation_mode # {TO_TARGET = 1, HEADING_START = 2, HEADING_DURING = 3} 
+			) >> FlyingStateChanged(state="hovering", _timeout=5)
+		).wait().success()
+
+
+	def move_to_ned_pos_cb(self, msg : PointStamped) -> None:
+		if self.ned_origo_in_lla is None:
+			rospy.logerr("GNSS-measurements are not received. Cannot move to desired NED-position")
+			return 
+
+		if msg.point.z > -0.5:
+			rospy.logwarn("Desired altitude is {} m above initial point. Risk of crash. Aborting...".format(-msg.point.z))
+			return
+
+		ell_wgs84 = pymap3d.Ellipsoid('wgs84')
+
+		lat_0 = self.ned_origo_in_lla[0]
+		lon_0 = self.ned_origo_in_lla[1]
+		a_0 = self.ned_origo_in_lla[2]
+
+		lat, lon, a = pymap3d.ned2geodetic(
+			msg.point.x, 
+			msg.point.y, 
+			msg.point.z, 
+			lat_0, 
+			lon_0, 
+			a_0, 
+			ell=ell_wgs84, 
+			deg=True
+		)
+		
+		self.drone(moveTo( 
+			latitude=lat, # latitude (degrees)
+			longitude=lon, # longitude (degrees)
+			altitude=a, # altitude (m)
+			heading=0, # heading relative to the North (degrees)
+			orientation_mode=3 # {TO_TARGET = 1, HEADING_START = 2, HEADING_DURING = 3} 
 			) >> FlyingStateChanged(state="hovering", _timeout=5)
 		).wait().success()
 
@@ -526,6 +576,20 @@ class Anafi(threading.Thread):
 		self.last_received_location.altitude = h1
 
 
+	def calculate_ned_position(self, gnss_msg : NavSatFix) -> np.ndarray:
+		ell_wgs84 = pymap3d.Ellipsoid('wgs84')
+		lat, lon, a = gnss_msg.latitude, gnss_msg.longitude, gnss_msg.altitude
+
+		if self.ned_origo_in_lla is None:
+			self.ned_origo_in_lla = (lat, lon, a)
+
+		lat_0 = self.ned_origo_in_lla[0]
+		lon_0 = self.ned_origo_in_lla[1]
+		a_0 = self.ned_origo_in_lla[2]
+
+		return pymap3d.geodetic2ned(lat, lon, a, lat_0, lon_0, a_0, ell=ell_wgs84, deg=True)
+
+
 	def run(self): 
 		freq = 100
 		rate = rospy.Rate(freq) # 100hz
@@ -540,7 +604,7 @@ class Anafi(threading.Thread):
 		rospy.logdebug('BankedTurn = %i', self.drone.get_state(BankedTurnChanged)["state"])
 		
 		i = 0
-		min_iterations = freq // 20
+		min_iterations = 5 # Should techically be 20, but higher update freq should not matter  
 		prev_attitude = None
 
 		while not rospy.is_shutdown():
@@ -633,7 +697,7 @@ class Anafi(threading.Thread):
 
 class EveryEventListener(olympe.EventListener):
 	def __init__(self, anafi):
-		self.anafi = anafi.drone
+		self.anafi = anafi
 				
 		self.msg_rpyt = SkyControllerCommand()
 		
