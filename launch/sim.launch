@@ -1,14 +1,18 @@
 <?xml version="1.0"?>
 
 <launch>
-    <arg name="qualisys_available" default="false"/> <!-- This has to be set to False when using sim -->
+	<arg name="use_manual_control" default="false"/>
+	<arg name="qualisys_available" default="false"/>
+	<arg name="is_sim" default="true"/>
+
+	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
+	<param name="use_manual_control" type="boolean" value="$(arg use_manual_control)" />
+	<param name="is_sim" type="boolean" value="$(arg is_sim)" />
 
 	<!-- Testing in the sim indicates that the cmds must be halved for roll and pitch  -->
 	<param name="roll_cmd_scale" type="double" value="0.5" />
 	<param name="pitch_cmd_scale" type="double" value="0.5" />
 	<param name="thrust_cmd_scale" type="double" value="1.0" />
-
-	<param name="qualisys_available" type="boolean" value="$(arg qualisys_available)" />
 
 	<param name="drone_ip" type="string" value="10.202.0.1" />
 
