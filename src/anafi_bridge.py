@@ -105,7 +105,7 @@ class Anafi(threading.Thread):
 		rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self.move_to_ned_pos_cb)		
 
 		if self.is_qualisys_available:
-			rospy.Subscriber("/qualisys/Anafi/pose", PoseStamped, self.qualisys_callback)
+			rospy.Subscriber("/qualisys/Anafi/pose_downsampled", PoseStamped, self.qualisys_callback)
 			self.last_received_location = NavSatFix()
 		
 		self.drone_ip = rospy.get_param("drone_ip")
@@ -572,6 +572,12 @@ class Anafi(threading.Thread):
 		x = msg.pose.position.x
 		y = msg.pose.position.y
 		z = msg.pose.position.z
+
+		noise = np.random.normal(0, 0.4, 3) # Zero mean, 0.4 std. dev gaussian noise
+
+		x += noise[0]
+		y += noise[1]
+		z += noise[2]
 
 		ell_wgs84 = pymap3d.Ellipsoid('wgs84')
 		lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of ENU, setting origin to be @ the drone lab at NTNU
