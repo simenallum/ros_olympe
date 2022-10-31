@@ -65,6 +65,7 @@ class Anafi(threading.Thread):
 
     self.is_qualisys_available = rospy.get_param("/qualisys_available")
     self.is_sim = rospy.get_param("/is_sim")
+    self.use_manual_control = rospy.get_param("/use_manual_control")
 
     if self.is_qualisys_available:			
       rospy.loginfo("Flying at drone lab: Qualisys is available")
@@ -97,7 +98,7 @@ class Anafi(threading.Thread):
     rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
     rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
     rospy.Subscriber("/anafi/cmd_emergency", Empty, self.emergency_callback)
-    rospy.Subscriber("/anafi/cmd_offboard", Bool, self.offboard_callback)
+    rospy.Subscriber("/anafi/cmd_offboard", Bool, self.set_olympe_control_callback)
     rospy.Subscriber("/anafi/cmd_rpyt", AttitudeCommand, self.rpyt_callback)
     rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self.moveTo_callback)
     rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
@@ -138,10 +139,15 @@ class Anafi(threading.Thread):
         exit()
       rate.sleep()
 
-    #TODO WE have to find a better way to do this
     if self.drone_ip == "192.168.53.1":
-      self.switch_manual()
-      # self.switch_offboard()
+      if self.use_manual_control:
+        rospy.loginfo("Setting manual control")
+        assert self.switch_to_manual_control(), "Unable to set manual control. Exiting"
+      else:
+        rospy.loginfo("Setting piloting source to Olympe")
+        assert self.switch_to_olympe_control(), "Unable to set control to Olympe. Exiting"
+    else:
+      rospy.logwarn("Piloting source not initialized. This should only occur in the simulator...")
 
     self.frame_queue = queue.Queue()
     self.flush_queue_lock = threading.Lock()
@@ -195,7 +201,6 @@ class Anafi(threading.Thread):
     return config
     
 
-  # This function will be called by Olympe for each decoded YUV frame.
   def yuv_frame_cb(self, yuv_frame) -> None:  
     yuv_frame.ref()
     self.frame_queue.put_nowait(yuv_frame)
@@ -280,7 +285,7 @@ class Anafi(threading.Thread):
           location = metadata[1]['drone']['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
           if location != {}:			
             msg_location.header = header
-            msg_location.header.frame_id = '/world'
+            msg_location.header.frame_id = 'world'
             msg_location.latitude = location['latitude']    # [deg]
             msg_location.longitude = location['longitude']  # [deg]
             msg_location.altitude = location['altitude']    # [m] over WGS84
@@ -297,7 +302,7 @@ class Anafi(threading.Thread):
 
         elif self.is_qualisys_available:
           msg_location.header = header
-          msg_location.header.frame_id = '/world'
+          msg_location.header.frame_id = 'world'
           msg_location.latitude = self.last_received_location.latitude
           msg_location.longitude = self.last_received_location.longitude
           msg_location.altitude = self.last_received_location.altitude
@@ -327,7 +332,7 @@ class Anafi(threading.Thread):
         speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
         msg_speed = Vector3Stamped()
         msg_speed.header = header
-        msg_speed.header.frame_id = '/world'
+        msg_speed.header.frame_id = 'world'
         msg_speed.vector.x = speed['north']
         msg_speed.vector.y = speed['east']
         msg_speed.vector.z = speed['down']
@@ -413,11 +418,11 @@ class Anafi(threading.Thread):
     rospy.logfatal("Emergency!!!")
 
 
-  def offboard_callback(self, msg):
+  def set_olympe_control_callback(self, msg) -> None:
     if msg.data == False:	
-      self.switch_manual()
+      self.switch_to_manual_control()
     else:
-      self.switch_offboard()
+      self.switch_to_olympe_control()
 
 
   def rpyt_callback(self, msg : AttitudeCommand) -> None:
@@ -502,7 +507,7 @@ class Anafi(threading.Thread):
     ).wait().success()
 
 
-  def camera_callback(self, msg):
+  def camera_callback(self, msg) -> None:
     if msg.action & 0b001: # take picture
       self.drone(camera.take_photo(cam_id=0)) # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
     if msg.action & 0b010: # start recording
@@ -530,15 +535,15 @@ class Anafi(threading.Thread):
       target=msg.zoom)) # [1, 3]
       
 
-  def bound(self, value, value_min, value_max):
+  def bound(self, value, value_min, value_max) -> float:
     return min(max(value, value_min), value_max)
     
 
-  def bound_percentage(self, value):
+  def bound_percentage(self, value) -> float:
     return self.bound(value, -100, 100)
 
 
-  def switch_manual(self):
+  def switch_to_manual_control(self) -> bool:
     msg_rpyt = SkyControllerCommand()
     msg_rpyt.header.stamp = rospy.Time.now()
     msg_rpyt.header.frame_id = '/body'
@@ -546,22 +551,25 @@ class Anafi(threading.Thread):
 
     # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
     self.drone(mapper.grab(buttons=(0<<0|0<<1|0<<2|1<<3), axes=0)).wait() # bitfields
-    self.drone(setPilotingSource(source="SkyController")).wait()
+    if not self.drone(setPilotingSource(source="SkyController")).wait():
+      rospy.logerr("Failed to set manual control")
+      return False
     rospy.loginfo("Control: Manual")
+    return True
 
 
-  def switch_offboard(self):
+  def switch_to_olympe_control(self) -> bool: 
     # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
     # axis: 	0 = yaw, 1 = trottle, 2 = roll, 3 = pithch, 4 = camera, 5 = zoom
-    if self.drone.get_state(pilotingSource)["source"] == PilotingSource_Source.SkyController:
-      self.drone(mapper.grab(buttons=(1<<0|0<<1|1<<2|1<<3), axes=(1<<0|1<<1|1<<2|1<<3|0<<4|0<<5))) # bitfields
-      self.drone(setPilotingSource(source="Controller")).wait()
-      rospy.loginfo("Control: Offboard")
-    else:
-      self.switch_manual()
+    self.drone(mapper.grab(buttons=(1<<0|0<<1|1<<2|1<<3), axes=(1<<0|1<<1|1<<2|1<<3|0<<4|0<<5))) # bitfields
+    if not self.drone(setPilotingSource(source="Controller")).wait():
+      rospy.logerr("Failed to set control to olympe")
+      return False
+    rospy.loginfo("Control: Olympe")
+    return True
 
 
-  def qualisys_callback(self, msg: PoseStamped):
+  def qualisys_callback(self, msg: PoseStamped) -> None:
     x = msg.pose.position.x
     y = msg.pose.position.y
     z = msg.pose.position.z
@@ -575,7 +583,7 @@ class Anafi(threading.Thread):
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
     lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of NED, setting origin to be @ the drone lab at NTNU
 
-    lat1, lon1, h1 = pymap3d.enu2geodetic(x, y, z, \
+    lat1, lon1, h1 = pymap3d.ned2geodetic(x, y, z, \
                       lat0, lon0, h0, \
                       ell=ell_wgs84, deg=True)  # wgs84 ellisoid
 
@@ -598,7 +606,7 @@ class Anafi(threading.Thread):
     return pymap3d.geodetic2ned(lat, lon, a, lat_0, lon_0, a_0, ell=ell_wgs84, deg=True)
 
 
-  def run(self): 
+  def run(self) -> None: 
     freq = 100
     rate = rospy.Rate(freq) # 100hz
     
@@ -737,10 +745,10 @@ class EveryEventListener(olympe.EventListener):
 				rospy.logfatal("Emergency!!!")
 				return
 			if event.args["button"] == 2: # left back button
-				self.anafi.switch_manual()
+				self.anafi.switch_to_manual_control()
 				return
 			if event.args["button"] == 3: # right back button
-				self.anafi.switch_offboard()
+				self.anafi.switch_to_olympe_control()
 				self.msg_rpyt = SkyControllerCommand()
 				return
 
@@ -765,7 +773,7 @@ class EveryEventListener(olympe.EventListener):
 	def onAttitudeChanged(self, event, scheduler):
 		msg_rpy = Vector3Stamped()
 		msg_rpy.header.stamp = rospy.Time.now()
-		msg_rpy.header.frame_id = '/world'
+		msg_rpy.header.frame_id = 'world'
 		msg_rpy.vector.x = event.args["roll"]
 		msg_rpy.vector.y = event.args["pitch"]
 		msg_rpy.vector.z = event.args["yaw"]

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <launch>
-	<arg name="use_manual_control" default="false"/>
+	<arg name="use_manual_control" /> <!-- default="false"/> -->
 	<arg name="qualisys_available" default="true"/>
 	<arg name="is_sim" default="false"/>
 
@@ -16,7 +16,7 @@
 
 	<param name="drone_ip" type="string" value="192.168.53.1" /> <!-- This is the skycontroller IP -->
 
-	<node name="anafi_bridge" pkg="olympe_bridge" type="spin_bridge.py" output="screen"/>
+	<node name="anafi_bridge" pkg="olympe_bridge" type="anafi_bridge.py" output="screen"/>
 
 	<node name="qualisys_downsampler" type="throttle" pkg="topic_tools" args="messages /qualisys/Anafi/pose 1 /qualisys/Anafi/pose_downsampled" /> <!-- DOWNSAMPLE TO SIMULATE GNSS -->
 </launch>
