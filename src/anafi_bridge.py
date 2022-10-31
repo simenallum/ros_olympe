@@ -573,7 +573,7 @@ class Anafi(threading.Thread):
     z += noise[2]
 
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
-    lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of ENU, setting origin to be @ the drone lab at NTNU
+    lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of NED, setting origin to be @ the drone lab at NTNU
 
     lat1, lon1, h1 = pymap3d.enu2geodetic(x, y, z, \
                       lat0, lon0, h0, \
