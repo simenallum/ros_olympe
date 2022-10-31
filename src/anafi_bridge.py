@@ -313,6 +313,15 @@ class Anafi(threading.Thread):
 
 					status.status = 0	# Position fix
 
+					n, e, d = self.calculate_ned_position(msg_location)
+					msg_ned_pos_from_gnss = PointStamped()
+					msg_ned_pos_from_gnss.header = header 
+					msg_ned_pos_from_gnss.point.x = n
+					msg_ned_pos_from_gnss.point.y = e 
+					msg_ned_pos_from_gnss.point.z = d 
+
+					self.pub_ned_pose_from_gnss.publish(msg_ned_pos_from_gnss)
+
 				msg_location.status = status
 				self.pub_gnss_location.publish(msg_location)
 
