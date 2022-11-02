@@ -10,39 +10,32 @@ import traceback
 import math
 import olympe
 import numpy as np
-import multiprocessing
-
 import pymap3d
 
-from std_msgs.msg import UInt8, UInt16, UInt32, Int8, Float32, Float64, String, Header, Time, Empty, Bool
-from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion, Twist, Vector3
+from cv_bridge import CvBridge
+from scipy.spatial.transform import Rotation as R
+
+from std_msgs.msg import UInt8, UInt16, Int8, Float64, String, Header, Time, Empty, Bool
+from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, NavSatFix, NavSatStatus
 
-from olympe.messages.drone_manager import connection_state
 from olympe.messages.ardrone3.Piloting import TakeOff, Landing, Emergency, PCMD, moveBy, moveTo
-from olympe.messages.ardrone3.PilotingState import FlyingStateChanged, PositionChanged, SpeedChanged, AttitudeChanged, AltitudeChanged, GpsLocationChanged
+from olympe.messages.ardrone3.PilotingState import FlyingStateChanged, SpeedChanged, AttitudeChanged
 from olympe.messages.ardrone3.PilotingSettings import MaxTilt, MaxDistance, MaxAltitude, NoFlyOverMaxDistance, BankedTurn
 from olympe.messages.ardrone3.PilotingSettingsState import MaxTiltChanged, MaxDistanceChanged, MaxAltitudeChanged, NoFlyOverMaxDistanceChanged, BankedTurnChanged
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed, MaxRotationSpeed, MaxPitchRollRotationSpeed
 from olympe.messages.ardrone3.SpeedSettingsState import MaxVerticalSpeedChanged, MaxRotationSpeedChanged, MaxPitchRollRotationSpeedChanged
-from olympe.messages.ardrone3.GPSSettingsState import GPSFixStateChanged
-from olympe.messages.ardrone3.GPSState import NumberOfSatelliteChanged
+
 from olympe.messages.skyctrl.CoPiloting import setPilotingSource
-from olympe.messages.skyctrl.CoPilotingState import pilotingSource
-from olympe.messages.skyctrl.Common import AllStates
-from olympe.messages.skyctrl.CommonState import AllStatesChanged
+
 from olympe.messages import gimbal, camera, mapper
 from olympe.enums.mapper import button_event
-from olympe.enums.skyctrl.CoPilotingState import PilotingSource_Source
-
-from cv_bridge import CvBridge
-
-from scipy.spatial.transform import Rotation as R
 
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
+
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
@@ -95,15 +88,15 @@ class Anafi(threading.Thread):
     self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
     self.pub_ned_pose_from_gnss = rospy.Publisher("/anafi/ned_pose_from_gnss", PointStamped, queue_size=1)
 
-    rospy.Subscriber("/anafi/cmd_takeoff", Empty, self.takeoff_callback)
-    rospy.Subscriber("/anafi/cmd_land", Empty, self.land_callback)
-    rospy.Subscriber("/anafi/cmd_emergency", Empty, self.emergency_callback)
-    rospy.Subscriber("/anafi/cmd_offboard", Bool, self.set_olympe_control_callback)
-    rospy.Subscriber("/anafi/cmd_rpyt", AttitudeCommand, self.rpyt_callback)
-    rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self.moveTo_callback)
-    rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self.moveBy_callback)
-    rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self.camera_callback)
-    rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self.move_to_ned_pos_cb)		
+    rospy.Subscriber("/anafi/cmd_takeoff", Empty, self._takeoff_callback)
+    rospy.Subscriber("/anafi/cmd_land", Empty, self._land_callback)
+    rospy.Subscriber("/anafi/cmd_emergency", Empty, self._emergency_callback)
+    rospy.Subscriber("/anafi/cmd_offboard", Bool, self._set_control_source_callback)
+    rospy.Subscriber("/anafi/cmd_rpyt", AttitudeCommand, self._rpyt_callback)
+    rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self._moveTo_callback)
+    rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self._moveBy_callback)
+    rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self._camera_callback)
+    rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self._move_to_ned_pos_cb)		
 
     if self.is_qualisys_available:
       rospy.Subscriber("/qualisys/Anafi/pose_downsampled", PoseStamped, self.qualisys_callback)
@@ -115,17 +108,17 @@ class Anafi(threading.Thread):
     # Create listener for RC events
     self.every_event_listener = EveryEventListener(self.drone)
 
-    rospy.on_shutdown(self.stop)
+    rospy.on_shutdown(self._stop)
     
-    self.srv = Server(setAnafiConfig, self.reconfigure_callback)
+    self.srv = Server(setAnafiConfig, self._reconfigure_callback)
 
-    self.connect()
+    self._connect()
     
     # To convert OpenCV images to ROS images
     self.bridge = CvBridge()
     
 
-  def connect(self) -> None:
+  def _connect(self) -> None:
     self.every_event_listener.subscribe()
     
     rate = rospy.Rate(1) # 1hz
@@ -142,10 +135,10 @@ class Anafi(threading.Thread):
     if self.drone_ip == "192.168.53.1":
       if self.use_manual_control:
         rospy.loginfo("Setting manual control")
-        assert self.switch_to_manual_control(), "Unable to set manual control. Exiting"
+        assert self._switch_to_manual_control(), "Unable to set manual control. Exiting"
       else:
         rospy.loginfo("Setting piloting source to Olympe")
-        assert self.switch_to_olympe_control(), "Unable to set control to Olympe. Exiting"
+        assert self._switch_to_olympe_control(), "Unable to set control to Olympe. Exiting"
     else:
       rospy.logwarn("Piloting source not initialized. This should only occur in the simulator...")
 
@@ -157,14 +150,14 @@ class Anafi(threading.Thread):
 
     # Setup the callback functions to do some live video processing
     self.drone.streaming.set_callbacks(
-      raw_cb=self.yuv_frame_cb,
-      flush_raw_cb=self.flush_cb
+      raw_cb=self._yuv_frame_cb,
+      flush_raw_cb=self._flush_cb
     )
 
     self.drone.streaming.start()
     
 
-  def disconnect(self) -> None:
+  def _disconnect(self) -> None:
     self.pub_state.publish("DISCONNECTING")
     self.every_event_listener.unsubscribe()
     self.drone.streaming.stop()
@@ -172,12 +165,16 @@ class Anafi(threading.Thread):
     self.pub_state.publish("DISCONNECTED")
     
 
-  def stop(self) -> None:
+  def _stop(self) -> None:
     rospy.loginfo("AnafiBridge is stopping...")
-    self.disconnect()
+    self._disconnect()
 
 
-  def reconfigure_callback(self, config : setAnafiConfig, level : int) -> setAnafiConfig:
+  def _reconfigure_callback(
+        self, 
+        config : setAnafiConfig, 
+        level  : int
+      ) -> setAnafiConfig:
     if level == -1 or level == 1:
       self.drone(MaxTilt(config['max_tilt'])).wait() 																				# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html?#olympe.messages.ardrone3.PilotingSettings.MaxTilt
       self.drone(MaxVerticalSpeed(config['max_vertical_speed'])).wait() 										# https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.SpeedSettings.MaxVerticalSpeed
@@ -201,19 +198,19 @@ class Anafi(threading.Thread):
     return config
     
 
-  def yuv_frame_cb(self, yuv_frame) -> None:  
+  def _yuv_frame_cb(self, yuv_frame) -> None:  
     yuv_frame.ref()
     self.frame_queue.put_nowait(yuv_frame)
 
 
-  def flush_cb(self, _) -> Bool:
+  def _flush_cb(self, _) -> Bool:
     with self.flush_queue_lock:
       while not self.frame_queue.empty():
         self.frame_queue.get_nowait().unref()
     return True
 
 
-  def yuv_callback(self, yuv_frame) -> None:
+  def _yuv_callback(self, yuv_frame) -> None:
     # Use OpenCV to convert the yuv frame to RGB
     # the VideoFrame.info() dictionary contains some useful information
     # such as the video resolution
@@ -311,7 +308,7 @@ class Anafi(threading.Thread):
 
         if status.status == 0:
 
-          n, e, d = self.calculate_ned_position(msg_location)
+          n, e, d = self._calculate_ned_position(msg_location)
           msg_ned_pos_from_gnss = PointStamped()
           msg_ned_pos_from_gnss.header = header 
           msg_ned_pos_from_gnss.point.x = n
@@ -400,32 +397,32 @@ class Anafi(threading.Thread):
       rospy.logwarn("Packet lost!")
 
 
-  def takeoff_callback(self, msg : Empty) -> None:		
+  def _takeoff_callback(self, msg : Empty) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
     self.drone(TakeOff() >> FlyingStateChanged(state="hovering", _timeout=10)).wait() 
     rospy.logwarn("Takeoff")
 
 
-  def land_callback(self, msg : Empty) -> None:
+  def _land_callback(self, msg : Empty) -> None:
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.Landing		
     self.drone(Landing()).wait() 
     rospy.loginfo("Land")
 
 
-  def emergency_callback(self, msg) -> None:
+  def _emergency_callback(self, msg) -> None:
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.Emergency		
     self.drone(Emergency()).wait() 
     rospy.logfatal("Emergency!!!")
 
 
-  def set_olympe_control_callback(self, msg) -> None:
+  def _set_control_source_callback(self, msg) -> None:
     if msg.data == False:	
-      self.switch_to_manual_control()
+      self._switch_to_manual_control()
     else:
-      self.switch_to_olympe_control()
+      self._switch_to_olympe_control()
 
 
-  def rpyt_callback(self, msg : AttitudeCommand) -> None:
+  def _rpyt_callback(self, msg : AttitudeCommand) -> None:
     time_msg_received = rospy.Time.now()
 
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.PCMD
@@ -436,10 +433,10 @@ class Anafi(threading.Thread):
 
     self.drone(PCMD( 
       flag=1,
-      roll=int(self.bound_percentage(self.roll_cmd_scale * msg.roll / self.max_tilt * 100)),      			# roll [-100, 100] (% of max tilt)
-      pitch=int(self.bound_percentage(-self.pitch_cmd_scale * msg.pitch / self.max_tilt * 100)),   			# pitch [-100, 100] (% of max tilt)
-      yaw=int(self.bound_percentage(msg.yaw / self.max_rotation_speed * 100)), 													# yaw rate [-100, 100] (% of max yaw rate)
-      gaz=int(self.bound_percentage(-self.thrust_cmd_scale * msg.gaz / self.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
+      roll=int(self._bound_percentage(self.roll_cmd_scale * msg.roll / self.max_tilt * 100)),      			# roll [-100, 100] (% of max tilt)
+      pitch=int(self._bound_percentage(-self.pitch_cmd_scale * msg.pitch / self.max_tilt * 100)),   			# pitch [-100, 100] (% of max tilt)
+      yaw=int(self._bound_percentage(msg.yaw / self.max_rotation_speed * 100)), 													# yaw rate [-100, 100] (% of max yaw rate)
+      gaz=int(self._bound_percentage(-self.thrust_cmd_scale * msg.gaz / self.max_vertical_speed * 100)), # vertical speed [-100, 100] (% of max vertical speed)
       timestampAndSeqNum=0)) # for debug only
 
     time_diff = (time_msg_received - msg.header.stamp).to_sec()
@@ -448,7 +445,7 @@ class Anafi(threading.Thread):
     self.pub_msg_latency.publish(latency_msg)
 
 
-  def moveBy_callback(self, msg : MoveByCommand) -> None:		
+  def _moveBy_callback(self, msg : MoveByCommand) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveBy
     self.drone(moveBy(
       dX=msg.dx, # displacement along the front axis (m)
@@ -459,7 +456,7 @@ class Anafi(threading.Thread):
     ).wait().success()
 
 
-  def moveTo_callback(self, msg : MoveToCommand) -> None:		
+  def _moveTo_callback(self, msg : MoveToCommand) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveTo
     self.drone(moveTo( 
       latitude=msg.latitude, # latitude (degrees)
@@ -471,9 +468,9 @@ class Anafi(threading.Thread):
     ).wait().success()
 
 
-  def move_to_ned_pos_cb(self, msg : PointStamped) -> None:
+  def _move_to_ned_pos_cb(self, msg : PointStamped) -> None:
     if self.ned_origo_in_lla is None:
-      rospy.logerr("GNSS-measurements are not received. Cannot move to desired NED-position")
+      rospy.logerr_throttle(1, "GNSS-measurements are not received, such that the origin is not initialized. Cannot move to desired NED-position")
       return 
 
     if msg.point.z > -0.5:
@@ -486,7 +483,7 @@ class Anafi(threading.Thread):
     lon_0 = self.ned_origo_in_lla[1]
     a_0 = self.ned_origo_in_lla[2]
 
-    lat, lon, a = pymap3d.ned2geodetic(
+    lat, lon, a = pymap3d.ned2geodetic( # May not be accurate enough for precise positioning...
       msg.point.x, 
       msg.point.y, 
       msg.point.z, 
@@ -507,15 +504,15 @@ class Anafi(threading.Thread):
     ).wait().success()
 
 
-  def camera_callback(self, msg) -> None:
+  def _camera_callback(self, msg) -> None:
     if msg.action & 0b001: # take picture
-      self.drone(camera.take_photo(cam_id=0)) # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
+      self.drone(camera.take_photo(cam_id=0))             # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.take_photo
     if msg.action & 0b010: # start recording
       self.drone(camera.start_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.start_recording
-    if msg.action & 0b100: # stop recording
-      self.drone(camera.stop_recording(cam_id=0)).wait() # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
+    if msg.action & 0b100: # _stop recording
+      self.drone(camera.stop_recording(cam_id=0)).wait()  # https://developer.parrot.com/docs/olympe/arsdkng_camera.html#olympe.messages.camera.stop_recording
 
-    rospy.loginfo("Received gimal command")
+    rospy.loginfo("Received gimbal command")
 
     # https://developer.parrot.com/docs/olympe/arsdkng_gimbal.html#olympe.messages.gimbal.set_target
     self.drone(gimbal.set_target( 
@@ -535,15 +532,20 @@ class Anafi(threading.Thread):
       target=msg.zoom)) # [1, 3]
       
 
-  def bound(self, value, value_min, value_max) -> float:
+  def _bound(
+        self, 
+        value     : float, 
+        value_min : float, 
+        value_max : float 
+      ) -> float:
     return min(max(value, value_min), value_max)
     
 
-  def bound_percentage(self, value) -> float:
-    return self.bound(value, -100, 100)
+  def _bound_percentage(self, value : float) -> float:
+    return self._bound(value, -100, 100)
 
 
-  def switch_to_manual_control(self) -> bool:
+  def _switch_to_manual_control(self) -> bool:
     msg_rpyt = SkyControllerCommand()
     msg_rpyt.header.stamp = rospy.Time.now()
     msg_rpyt.header.frame_id = '/body'
@@ -558,7 +560,7 @@ class Anafi(threading.Thread):
     return True
 
 
-  def switch_to_olympe_control(self) -> bool: 
+  def _switch_to_olympe_control(self) -> bool: 
     # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
     # axis: 	0 = yaw, 1 = trottle, 2 = roll, 3 = pithch, 4 = camera, 5 = zoom
     self.drone(mapper.grab(buttons=(1<<0|0<<1|1<<2|1<<3), axes=(1<<0|1<<1|1<<2|1<<3|0<<4|0<<5))) # bitfields
@@ -592,7 +594,7 @@ class Anafi(threading.Thread):
     self.last_received_location.altitude = h1
 
 
-  def calculate_ned_position(self, gnss_msg : NavSatFix) -> np.ndarray:
+  def _calculate_ned_position(self, gnss_msg : NavSatFix) -> np.ndarray:
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
     lat, lon, a = gnss_msg.latitude, gnss_msg.longitude, gnss_msg.altitude
 
@@ -627,8 +629,8 @@ class Anafi(threading.Thread):
       connection = self.drone.connection_state()
       if connection == False:
         rospy.logfatal(str(connection))
-        self.disconnect()
-        self.connect()
+        self._disconnect()
+        self._connect()
 
       if i >= min_iterations:
         att_euler = self.drone.get_state(AttitudeChanged)
@@ -699,7 +701,7 @@ class Anafi(threading.Thread):
           continue
         
         try:
-          self.yuv_callback(yuv_frame)
+          self._yuv_callback(yuv_frame)
         except Exception:
           # Continue popping frame from the queue even if it fails to show one frame
           traceback.print_exc()
@@ -745,10 +747,10 @@ class EveryEventListener(olympe.EventListener):
 				rospy.logfatal("Emergency!!!")
 				return
 			if event.args["button"] == 2: # left back button
-				self.anafi.switch_to_manual_control()
+				self.anafi._switch_to_manual_control()
 				return
 			if event.args["button"] == 3: # right back button
-				self.anafi.switch_to_olympe_control()
+				self.anafi._switch_to_olympe_control()
 				self.msg_rpyt = SkyControllerCommand()
 				return
 
