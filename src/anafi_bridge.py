@@ -329,20 +329,20 @@ class Anafi(threading.Thread):
         speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
         rotation_matrix_body_to_vehicle = rot_corrected_body_to_vehicle.as_matrix()   
 
-        north_dot = speed['north']
-        east_dot = speed['east']
-        down_dot = speed['down']
+        of_cam_north_dot = speed['north']
+        of_cam_east_dot = speed['east']
+        of_cam_down_dot = speed['down']
 
         # Might become somewhat inaccurate if the yaw-estimate is poor
         # After rotation, the velocities are in given in order East-South-Down in the body frame - just wtf??
-        optical_flow_velocities_WND = rotation_matrix_body_to_vehicle.T @ np.array([[north_dot], [east_dot], [down_dot]], dtype=np.float) 
+        optical_flow_velocities_ESD = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
 
         msg_speed = Vector3Stamped()
         msg_speed.header = header
         msg_speed.header.frame_id = 'body'
-        msg_speed.vector.x = -optical_flow_velocities_WND[1]
-        msg_speed.vector.y = optical_flow_velocities_WND[0]
-        msg_speed.vector.z = optical_flow_velocities_WND[2]
+        msg_speed.vector.x = -optical_flow_velocities_ESD[1]
+        msg_speed.vector.y = optical_flow_velocities_ESD[0]
+        msg_speed.vector.z = optical_flow_velocities_ESD[2]
         self.pub_optical_flow_velocities.publish(msg_speed)
 
         msg_pose = PoseStamped()
