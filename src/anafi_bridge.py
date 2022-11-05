@@ -334,15 +334,14 @@ class Anafi(threading.Thread):
         of_cam_down_dot = speed['down']
 
         # Might become somewhat inaccurate if the yaw-estimate is poor
-        # After rotation, the velocities are in given in order East-South-Down in the body frame - just wtf??
-        optical_flow_velocities_ESD = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
+        optical_flow_velocities_body = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
 
         msg_speed = Vector3Stamped()
         msg_speed.header = header
         msg_speed.header.frame_id = 'body'
-        msg_speed.vector.x = -optical_flow_velocities_ESD[1]
-        msg_speed.vector.y = optical_flow_velocities_ESD[0]
-        msg_speed.vector.z = optical_flow_velocities_ESD[2]
+        msg_speed.vector.x = optical_flow_velocities_body[0]
+        msg_speed.vector.y = optical_flow_velocities_body[1]
+        msg_speed.vector.z = optical_flow_velocities_body[2]
         self.pub_optical_flow_velocities.publish(msg_speed)
 
         msg_pose = PoseStamped()
