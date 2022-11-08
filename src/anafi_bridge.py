@@ -86,7 +86,7 @@ class Anafi(threading.Thread):
     self.pub_skycontroller = rospy.Publisher("/skycontroller/command", SkyControllerCommand, queue_size=1)
     self.pub_polled_velocities = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
     self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
-    self.pub_ned_pose_from_gnss = rospy.Publisher("/anafi/ned_pose_from_gnss", PointStamped, queue_size=1)
+    self.pub_ned_pos_from_gnss = rospy.Publisher("/anafi/ned_pos_from_gnss", PointStamped, queue_size=1)
 
     rospy.Subscriber("/anafi/cmd_takeoff", Empty, self._takeoff_callback)
     rospy.Subscriber("/anafi/cmd_land", Empty, self._land_callback)
@@ -268,8 +268,8 @@ class Anafi(threading.Thread):
           correction_terms = (-0.0002661987518324087, -0.0041069024624204534, 0)
 
         drone_rpy_corrected = drone_rpy + correction_terms
-        rot_corrected = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
-        quat = R.as_quat(rot_corrected)
+        rot_corrected_body_to_vehicle = R.from_euler('xyz', drone_rpy_corrected, degrees=False)
+        quat = R.as_quat(rot_corrected_body_to_vehicle)
 
         msg_attitude = QuaternionStamped()
         msg_attitude.header = header
@@ -315,7 +315,7 @@ class Anafi(threading.Thread):
           msg_ned_pos_from_gnss.point.y = e 
           msg_ned_pos_from_gnss.point.z = d 
 
-          self.pub_ned_pose_from_gnss.publish(msg_ned_pos_from_gnss)
+          self.pub_ned_pos_from_gnss.publish(msg_ned_pos_from_gnss)
 
         msg_location.status = status
         self.pub_gnss_location.publish(msg_location)
@@ -327,12 +327,21 @@ class Anafi(threading.Thread):
         self.pub_height.publish(height_msg)
 
         speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
+        rotation_matrix_body_to_vehicle = rot_corrected_body_to_vehicle.as_matrix()   
+
+        of_cam_north_dot = speed['north']
+        of_cam_east_dot = speed['east']
+        of_cam_down_dot = speed['down']
+
+        # Might become somewhat inaccurate if the yaw-estimate is poor
+        optical_flow_velocities_body = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
+
         msg_speed = Vector3Stamped()
         msg_speed.header = header
-        msg_speed.header.frame_id = 'world'
-        msg_speed.vector.x = speed['north']
-        msg_speed.vector.y = speed['east']
-        msg_speed.vector.z = speed['down']
+        msg_speed.header.frame_id = 'body'
+        msg_speed.vector.x = optical_flow_velocities_body[0]
+        msg_speed.vector.y = optical_flow_velocities_body[1]
+        msg_speed.vector.z = optical_flow_velocities_body[2]
         self.pub_optical_flow_velocities.publish(msg_speed)
 
         msg_pose = PoseStamped()
@@ -628,7 +637,7 @@ class Anafi(threading.Thread):
     while not rospy.is_shutdown():
       connection = self.drone.connection_state()
       if connection == False:
-        rospy.logfatal(str(connection))
+        rospy.logfatal("Lost connection to the Anafi")
         self._disconnect()
         self._connect()
 
@@ -714,78 +723,78 @@ class Anafi(threading.Thread):
 
 
 class EveryEventListener(olympe.EventListener):
-	def __init__(self, anafi):
-		self.anafi = anafi
-				
-		self.msg_rpyt = SkyControllerCommand()
-		
-		super().__init__(anafi)
+  def __init__(self, anafi):
+    self.anafi = anafi
+        
+    self.msg_rpyt = SkyControllerCommand()
+    
+    super().__init__(anafi)
 
 
-	def print_event(self, event): # Serializes an event object and truncates the result if necessary before printing it
-		if isinstance(event, olympe.ArsdkMessageEvent):
-			max_args_size = 200
-			args = str(event.args)
-			args = (args[: max_args_size - 3] + "...") if len(args) > max_args_size else args
-			rospy.logdebug("{}({})".format(event.message.fullName, args))
-		else:
-			rospy.logdebug(str(event))
+  def print_event(self, event): # Serializes an event object and truncates the result if necessary before printing it
+    if isinstance(event, olympe.ArsdkMessageEvent):
+      max_args_size = 200
+      args = str(event.args)
+      args = (args[: max_args_size - 3] + "...") if len(args) > max_args_size else args
+      rospy.logdebug("{}({})".format(event.message.fullName, args))
+    else:
+      rospy.logdebug(str(event))
 
 
-	# RC buttons listener     
-	@olympe.listen_event(mapper.grab_button_event()) 
-	# https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_button_event
-	def on_grab_button_event(self, event, scheduler):
-		self.print_event(event)
-		# button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
-		# axis_button:	4 = max CCW yaw, 5 = max CW yaw, 6 = max trottle, 7 = min trottle
-		# 		8 = min roll, 9 = max roll, 10 = min pitch, 11 = max pitch
-		# 		12 = max camera down, 13 = max camera up, 14 = min zoom, 15 = max zoom
-		if event.args["event"] == button_event.press:
-			if event.args["button"] == 0: # RTL
-				self.anafi.drone(Emergency()).wait()
-				rospy.logfatal("Emergency!!!")
-				return
-			if event.args["button"] == 2: # left back button
-				self.anafi._switch_to_manual_control()
-				return
-			if event.args["button"] == 3: # right back button
-				self.anafi._switch_to_olympe_control()
-				self.msg_rpyt = SkyControllerCommand()
-				return
+  # RC buttons listener     
+  @olympe.listen_event(mapper.grab_button_event()) 
+  # https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_button_event
+  def on_grab_button_event(self, event, scheduler):
+    self.print_event(event)
+    # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
+    # axis_button:	4 = max CCW yaw, 5 = max CW yaw, 6 = max trottle, 7 = min trottle
+    # 		8 = min roll, 9 = max roll, 10 = min pitch, 11 = max pitch
+    # 		12 = max camera down, 13 = max camera up, 14 = min zoom, 15 = max zoom
+    if event.args["event"] == button_event.press:
+      if event.args["button"] == 0: # RTL
+        self.anafi.drone(Emergency()).wait()
+        rospy.logfatal("Emergency!!!")
+        return
+      if event.args["button"] == 2: # left back button
+        self.anafi._switch_to_manual_control()
+        return
+      if event.args["button"] == 3: # right back button
+        self.anafi._switch_to_olympe_control()
+        self.msg_rpyt = SkyControllerCommand()
+        return
 
 
-	# RC axis listener
-	@olympe.listen_event(mapper.grab_axis_event()) 
-	# https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_axis_event
-	def on_grab_axis_event(self, event, scheduler):	
-		# axis: 	0 = yaw, 1 = z, 2 = y, 3 = x, 4 = camera, 5 = zoom
-		if event.args["axis"] == 0: # yaw
-			self.msg_rpyt.yaw = event.args["value"]
-		if event.args["axis"] == 1: # z
-			self.msg_rpyt.z = c
-		if event.args["axis"] == 2: # y/pitch
-			self.msg_rpyt.y = event.argtrue
-		self.msg_rpyt.header.stamp = rospy.Time.now()
-		self.msg_rpyt.header.frame_id = '/body'
-		self.anafi.pub_skycontroller.publish(self.msg_rpyt)
+  # RC axis listener
+  @olympe.listen_event(mapper.grab_axis_event()) 
+  # https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_axis_event
+  def on_grab_axis_event(self, event, scheduler):	
+    # axis: 	0 = yaw, 1 = z, 2 = y, 3 = x, 4 = camera, 5 = zoom
+    if event.args["axis"] == 0: # yaw
+      self.msg_rpyt.yaw = event.args["value"]
+    if event.args["axis"] == 1: # z
+      self.msg_rpyt.z = event.args["value"]
+    if event.args["axis"] == 2: # y/pitch
+      self.msg_rpyt.y = event.argtrue
+    self.msg_rpyt.header.stamp = rospy.Time.now()
+    self.msg_rpyt.header.frame_id = '/body'
+    self.anafi.pub_skycontroller.publish(self.msg_rpyt)
 
 
-	@olympe.listen_event(AttitudeChanged(_policy="wait"))
-	def onAttitudeChanged(self, event, scheduler):
-		msg_rpy = Vector3Stamped()
-		msg_rpy.header.stamp = rospy.Time.now()
-		msg_rpy.header.frame_id = 'world'
-		msg_rpy.vector.x = event.args["roll"]
-		msg_rpy.vector.y = event.args["pitch"]
-		msg_rpy.vector.z = event.args["yaw"]
-		self.anafi.pub_rpy.publish(msg_rpy)
-							
+  @olympe.listen_event(AttitudeChanged(_policy="wait"))
+  def onAttitudeChanged(self, event, scheduler):
+    msg_rpy = Vector3Stamped()
+    msg_rpy.header.stamp = rospy.Time.now()
+    msg_rpy.header.frame_id = 'world'
+    msg_rpy.vector.x = event.args["roll"]
+    msg_rpy.vector.y = event.args["pitch"]
+    msg_rpy.vector.z = event.args["yaw"]
+    self.anafi.pub_rpy.publish(msg_rpy)
+              
 
-	# All other events
-	@olympe.listen_event()
-	def default(self, event, scheduler):
-		pass
+  # All other events
+  @olympe.listen_event()
+  def default(self, event, scheduler):
+    pass
 
 
 if __name__ == '__main__':
