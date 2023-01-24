@@ -11,6 +11,7 @@ import math
 import olympe
 import numpy as np
 import pymap3d
+import sys
 
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as R
@@ -254,7 +255,9 @@ class Anafi(threading.Thread):
       self.pub_time.publish(msg_time)
 
       if "drone" in metadata[1]:
-        drone_quat = metadata[1]['drone']['quat'] # attitude
+        drone_data = metadata[1]['drone']
+
+        drone_quat = drone_data['quat'] # attitude
         quat = [drone_quat['x'], drone_quat['y'], drone_quat['z'], drone_quat['w']]
 
         Rot = R.from_quat(quat)
@@ -263,8 +266,10 @@ class Anafi(threading.Thread):
         # TODO Rewrite this part to more readable code. Currenly using magic number etc.
         # This part adds the offsets to the quaternions before it is published
         if self.drone_ip == "192.168.53.1":
-          correction_terms = (-0.015576460455065291, -0.012294590577876349, 0) #(-0.009875596168668191, -0.006219417359313843, 0)
+          # Real drone
+          correction_terms = (-0.015576460455065291, -0.012294590577876349, 0)
         else:
+          # Simulator
           correction_terms = (-0.0002661987518324087, -0.0041069024624204534, 0)
 
         drone_rpy_corrected = drone_rpy + correction_terms
@@ -278,14 +283,14 @@ class Anafi(threading.Thread):
 
         msg_location = NavSatFix()
         status = NavSatStatus()
-        if "location" in metadata[1]['drone']:
-          location = metadata[1]['drone']['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
+        if "location" in drone_data: # Sometimes unavailable?
+          location = drone_data['location']       # GNSS location [500.0=not available] (decimal deg) 500 what??
           if location != {}:			
             msg_location.header = header
             msg_location.header.frame_id = 'world'
-            msg_location.latitude = location['latitude']    # [deg]
-            msg_location.longitude = location['longitude']  # [deg]
-            msg_location.altitude = location['altitude']    # [m] over WGS84
+            msg_location.latitude = location['latitude']            # [deg]
+            msg_location.longitude = location['longitude']          # [deg]
+            msg_location.altitude = location['altitude_egm96amsl']  # [m] using EGM96 geoid (!!)
 
             status.status = 0 	# Position fix
 
@@ -308,7 +313,12 @@ class Anafi(threading.Thread):
 
         if status.status == 0:
 
-          n, e, d = self._calculate_ned_position(msg_location)
+          n, e, d = self._calculate_ned_position_wgs84(msg_location) # WGS84 assumed OK in the calculations !!
+
+          max_distance = 4000 # [m]
+          if np.any(np.array([n, e, d]) > max_distance):
+            rospy.logwarn_throttle(1, "NED values exceed maximum distance of {} meters".format(max_distance)) 
+
           msg_ned_pos_from_gnss = PointStamped()
           msg_ned_pos_from_gnss.header = header 
           msg_ned_pos_from_gnss.point.x = n
@@ -320,18 +330,18 @@ class Anafi(threading.Thread):
         msg_location.status = status
         self.pub_gnss_location.publish(msg_location)
 
-        ground_distance = metadata[1]['drone']['ground_distance'] # barometer (m)
+        ground_distance = drone_data['ground_distance'] # barometer (m)
         height_msg = Float32Stamped()
         height_msg.header = header
         height_msg.data = ground_distance
         self.pub_height.publish(height_msg)
 
-        speed = metadata[1]['drone']['speed'] # opticalflow speed (m/s)
+        of_speed = drone_data['speed'] # opticalflow speed (m/s)
         rotation_matrix_body_to_vehicle = rot_corrected_body_to_vehicle.as_matrix()   
 
-        of_cam_north_dot = speed['north']
-        of_cam_east_dot = speed['east']
-        of_cam_down_dot = speed['down']
+        of_cam_north_dot = of_speed['north']
+        of_cam_east_dot = of_speed['east']
+        of_cam_down_dot = of_speed['down']
 
         # Might become somewhat inaccurate if the yaw-estimate is poor
         optical_flow_velocities_body = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
@@ -361,10 +371,10 @@ class Anafi(threading.Thread):
         msg_odometry.twist.twist.linear.z = msg_speed.vector.z
         self.pub_odometry.publish(msg_odometry)
 
-        battery_percentage = metadata[1]['drone']['battery_percentage'] # [0=empty, 100=full]
+        battery_percentage = drone_data['battery_percentage'] # [0=empty, 100=full]
         self.pub_battery.publish(battery_percentage)
 
-        state = metadata[1]['drone']['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
+        state = drone_data['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
         self.pub_state.publish(state)
 
         # Log battery percentage
@@ -381,13 +391,15 @@ class Anafi(threading.Thread):
               rospy.logfatal_throttle(0.1, "Empty battery: " + str(battery_percentage) + "%")		
 
       if 'links' in metadata[1]:
-        link_goodput = metadata[1]['links'][0]['wifi']['goodput'] # throughput of the connection (b/s)
+        link_data = metadata[1]['links']
+        wifi_data = link_data[0]['wifi']
+        link_goodput = wifi_data['goodput'] # throughput of the connection (b/s)
         self.pub_link_goodput.publish(link_goodput)
 
-        link_quality = metadata[1]['links'][0]['wifi']['quality'] # [0=bad, 5=good]
+        link_quality = wifi_data['quality'] # [0=bad, 5=good]
         self.pub_link_quality.publish(link_quality)
 
-        wifi_rssi = metadata[1]['links'][0]['wifi']['rssi'] # signal strength [-100=bad, 0=good] (dBm)
+        wifi_rssi = wifi_data['rssi'] # signal strength [-100=bad, 0=good] (dBm)
         self.pub_wifi_rssi.publish(wifi_rssi)
       
         # Log signal strength
@@ -603,7 +615,18 @@ class Anafi(threading.Thread):
     self.last_received_location.altitude = h1
 
 
-  def _calculate_ned_position(self, gnss_msg : NavSatFix) -> np.ndarray:
+  def _calculate_ned_position_wgs84(self, gnss_msg : NavSatFix) -> np.ndarray:
+    warn_msg_str = """\n
+    Calculation of NED-position is outdated, as it relies on the WGS84 ellipsoid, and not the
+    updated EGM96 version. Thus, the altitude between the WGS84 and the
+    geoid will be different. Either find a good conversion, or use the
+    altitudal values with great care.\n
+    Hypothesis: The altitude difference between the geoid and the WGS84
+    should be negligable for our use case. As long as the altitude is used
+    to generate the NED-position, it should have little impact...\n
+    """
+    rospy.logwarn_once(warn_msg_str)
+
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
     lat, lon, a = gnss_msg.latitude, gnss_msg.longitude, gnss_msg.altitude
 
