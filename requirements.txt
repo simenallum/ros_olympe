@@ -1,0 +1,6 @@
+parrot-olympe
+scipy
+numpy
+protobuf
+opencv-python
+pymap3d
