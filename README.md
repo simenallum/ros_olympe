@@ -1,69 +1,21 @@
 # ROS Bridge for Parrot Drones
-This ROS package contains interface to Olympe SDK. Currently, it supports only Parrot Anafi drones (4K, Thermal, USA, AI).
+This ROS package contains interface to Olympe SDK. 
+Supports Parrot Anafi drones (4K, Thermal, USA, AI).
 
 ## Overview
 
-**Author:** Andriy Sarabakha<br />
+**Original author:** Andriy Sarabakha, andriy.sarabakha@ntu.edu.sg<br />
 **Affiliation:** [Nanyang Technological University (NTU)](https://www.ntu.edu.sg), Singapore<br />
-**Maintainer:** Andriy Sarabakha, andriy.sarabakha@ntu.edu.sg
-
-**Keywords:** Parrot, UAV, controller
-
-This is research code, expect that it changes often and any fitness for a particular purpose is disclaimed.
 
 ## Installation
 
-This package has been tested with **python3** in **ROS Melodic**/**Ubuntu 18.04** and **ROS Noetic**/**Ubuntu 20.04**.
+This package has been developed with **python3** in **ROS Noetic** on **Ubuntu 20.04**.
 
 ### Dependencies
 
-- [Parrot Olympe](https://developer.parrot.com/docs/olympe/installation.html) - SDK for Parrot drones:
+- python3 -m pip install requirements.txt
 
-      pip install parrot-olympe
-      
-  Check installation:
-  
-      python -c 'import olympe; print("Installation OK")'
-      
-  **Troubleshooting**
-
-  - *Issue*
-
-        /usr/bin/env: ‘python’: No such file or directory
-      
-    *Solution*
-  
-    Set `python3` as default `python` version:
-
-        echo 'alias python=python3' >> ~/.bash_aliases
-        source ~/.bash_aliases
-    
-  - *Issue*
-
-        AttributeError: module 'collections' has no attribute 'MutableMapping'
-    
-    *Solution*
-  
-    Install `protobuf` version `3.20.0`:
-
-        pip install protobuf==3.20.0
-
-- [OpenCV](https://pypi.org/project/opencv-python/) - library for real-time computer vision:
-
-      pip install opencv-python
-    
-- [SciPy](https://scipy.org/install/) - library for scientific and technical computing:
-
-      pip install scipy    
-    
-## Clone
-
-Clone the latest version from this repository into your ROS workspace:
-
-	cd ~/dev_ws/src
-	git clone https://github.com/andriyukr/olympe_bridge.git
-	sudo chmod -R 777 olympe_bridge/
 
 ## Run
 
-    roslaunch olympe_bridge anafi.launch
+    roslaunch ros_olympe <lab/sim>.launch
