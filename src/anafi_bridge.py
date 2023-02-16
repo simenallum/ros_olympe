@@ -35,7 +35,8 @@ from olympe.enums.mapper import button_event
 
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
-from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
+# from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
+from anafi_uav_msgs.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
 
 
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
