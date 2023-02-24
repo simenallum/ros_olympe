@@ -41,6 +41,7 @@ from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, Mov
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
 DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
+GNSS_ORIGIN_DRONE_LAB = (63.418215, 10.401655, 0) # origin of NED, setting origin to be @ the drone lab at NTNU
 
 class Anafi(threading.Thread):
   def __init__(self):
@@ -604,7 +605,7 @@ class Anafi(threading.Thread):
     z += noise[2]
 
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
-    lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of NED, setting origin to be @ the drone lab at NTNU
+    lat0, lon0, h0 = GNSS_ORIGIN_DRONE_LAB   
 
     lat1, lon1, h1 = pymap3d.ned2geodetic(x, y, z, \
                       lat0, lon0, h0, \
@@ -631,7 +632,10 @@ class Anafi(threading.Thread):
     lat, lon, a = gnss_msg.latitude, gnss_msg.longitude, gnss_msg.altitude
 
     if self.ned_origo_in_lla is None:
-      self.ned_origo_in_lla = (lat, lon, a)
+      if self.is_qualisys_available:
+        self.ned_origo_in_lla = GNSS_ORIGIN_DRONE_LAB
+      else:
+        self.ned_origo_in_lla = (lat, lon, a)
 
     lat_0 = self.ned_origo_in_lla[0]
     lon_0 = self.ned_origo_in_lla[1]
