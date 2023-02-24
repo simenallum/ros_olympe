@@ -41,6 +41,7 @@ from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, Mov
 olympe.log.update_config({"loggers": {"olympe": {"level": "ERROR"}}})
 
 DRONE_RTSP_PORT = os.environ.get("DRONE_RTSP_PORT", "554")
+GNSS_ORIGIN_DRONE_LAB = (63.418215, 10.401655, 0) # origin of NED, setting origin to be @ the drone lab at NTNU
 
 class Anafi(threading.Thread):
   def __init__(self):
@@ -344,7 +345,7 @@ class Anafi(threading.Thread):
         of_cam_down_dot = of_speed['down']
 
         # Might become somewhat inaccurate if the yaw-estimate is poor
-        optical_flow_velocities_body = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=np.float) 
+        optical_flow_velocities_body = rotation_matrix_body_to_vehicle.T @ np.array([[of_cam_north_dot], [of_cam_east_dot], [of_cam_down_dot]], dtype=float) 
 
         msg_speed = Vector3Stamped()
         msg_speed.header = header
@@ -364,7 +365,7 @@ class Anafi(threading.Thread):
 
         msg_odometry = Odometry()
         msg_odometry.header = header
-        msg_odometry.child_frame_id = '/body'
+        msg_odometry.child_frame_id = 'body'
         msg_odometry.pose.pose = msg_pose.pose
         msg_odometry.twist.twist.linear.x =  math.cos(drone_rpy[2])*msg_speed.vector.x + math.sin(drone_rpy[2])*msg_speed.vector.y
         msg_odometry.twist.twist.linear.y = -math.sin(drone_rpy[2])*msg_speed.vector.x + math.cos(drone_rpy[2])*msg_speed.vector.y
@@ -604,7 +605,7 @@ class Anafi(threading.Thread):
     z += noise[2]
 
     ell_wgs84 = pymap3d.Ellipsoid('wgs84')
-    lat0, lon0, h0 = 63.418215, 10.401655, 0   # origin of NED, setting origin to be @ the drone lab at NTNU
+    lat0, lon0, h0 = GNSS_ORIGIN_DRONE_LAB   
 
     lat1, lon1, h1 = pymap3d.ned2geodetic(x, y, z, \
                       lat0, lon0, h0, \
@@ -631,7 +632,10 @@ class Anafi(threading.Thread):
     lat, lon, a = gnss_msg.latitude, gnss_msg.longitude, gnss_msg.altitude
 
     if self.ned_origo_in_lla is None:
-      self.ned_origo_in_lla = (lat, lon, a)
+      if self.is_qualisys_available:
+        self.ned_origo_in_lla = GNSS_ORIGIN_DRONE_LAB
+      else:
+        self.ned_origo_in_lla = (lat, lon, a)
 
     lat_0 = self.ned_origo_in_lla[0]
     lon_0 = self.ned_origo_in_lla[1]
@@ -669,7 +673,15 @@ class Anafi(threading.Thread):
 
         roll = att_euler["roll"]     
         pitch = att_euler["pitch"]    
-        yaw = att_euler["yaw"]  
+        yaw = att_euler["yaw"]
+
+        msg_rpy = Vector3Stamped()
+        msg_rpy.header.stamp = rospy.Time.now()
+        msg_rpy.header.frame_id = 'world'
+        msg_rpy.vector.x = roll
+        msg_rpy.vector.y = pitch
+        msg_rpy.vector.z = yaw
+        self.pub_rpy.publish(msg_rpy)
 
         # Check if new 5 Hz data has arrived
         if prev_attitude is None or prev_attitude != [roll, pitch, yaw]:
@@ -801,17 +813,6 @@ class EveryEventListener(olympe.EventListener):
     self.msg_rpyt.header.stamp = rospy.Time.now()
     self.msg_rpyt.header.frame_id = '/body'
     self.anafi.pub_skycontroller.publish(self.msg_rpyt)
-
-
-  @olympe.listen_event(AttitudeChanged(_policy="wait"))
-  def onAttitudeChanged(self, event, scheduler):
-    msg_rpy = Vector3Stamped()
-    msg_rpy.header.stamp = rospy.Time.now()
-    msg_rpy.header.frame_id = 'world'
-    msg_rpy.vector.x = event.args["roll"]
-    msg_rpy.vector.y = event.args["pitch"]
-    msg_rpy.vector.z = event.args["yaw"]
-    self.anafi.pub_rpy.publish(msg_rpy)
               
 
   # All other events
