@@ -16,7 +16,7 @@ import sys
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as R
 
-from std_msgs.msg import UInt8, UInt16, Int8, Float64, String, Header, Time, Empty, Bool
+from std_msgs.msg import Int8, UInt8, UInt16, Int8, Float64, String, Header, Time, Empty, Bool
 from geometry_msgs.msg import PoseStamped, PointStamped, QuaternionStamped, TwistStamped, Vector3Stamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, NavSatFix, NavSatStatus
@@ -79,7 +79,7 @@ class Anafi(threading.Thread):
     self.pub_link_goodput = rospy.Publisher("/anafi/link_goodput", UInt16, queue_size=1)
     self.pub_link_quality = rospy.Publisher("/anafi/link_quality", UInt8, queue_size=1)
     self.pub_wifi_rssi = rospy.Publisher("/anafi/wifi_rssi", Int8, queue_size=1)
-    self.pub_battery = rospy.Publisher("/anafi/battery", UInt8, queue_size=1)
+    self.pub_battery = rospy.Publisher("/anafi/battery", Float64, queue_size=1)
     self.pub_state = rospy.Publisher("/anafi/state", String, queue_size=1)
     self.pub_mode = rospy.Publisher("/anafi/mode", String, queue_size=1)
     self.pub_pose = rospy.Publisher("/anafi/pose", PoseStamped, queue_size=1)
@@ -372,8 +372,11 @@ class Anafi(threading.Thread):
         msg_odometry.twist.twist.linear.z = msg_speed.vector.z
         self.pub_odometry.publish(msg_odometry)
 
-        battery_percentage = drone_data['battery_percentage'] # [0=empty, 100=full]
-        self.pub_battery.publish(battery_percentage)
+        battery_percentage = drone_data['battery_percentage'] # [0 = empty, 100 = full]
+        
+        battery_percentage_msg = Float64() # Using Int8 or UInt8 causes confusion with char over the ROS1 - ROS2 bridge
+        battery_percentage_msg.data = battery_percentage
+        self.pub_battery.publish(battery_percentage_msg)
 
         state = drone_data['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
         self.pub_state.publish(state)
