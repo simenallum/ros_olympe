@@ -463,7 +463,7 @@ class Anafi(threading.Thread):
 
   def _emergency_callback(self, msg) -> None:
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.Emergency		
-    self.drone(Emergency()).wait() 
+    self.drone(Emergency()) 
     rospy.logfatal("Emergency!!!")
 
 
@@ -499,25 +499,33 @@ class Anafi(threading.Thread):
 
   def _moveBy_callback(self, msg : MoveByCommand) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveBy
+
+    moveby_str = "Move by (x, y, z) (" + str(msg.dx) + ", " + str(msg.dy) + ", " + str(msg.dz) + ")"
+    rospy.logwarn(moveby_str)
+
     self.drone(moveBy(
       dX=msg.dx, # displacement along the front axis (m)
       dY=msg.dy, # displacement along the right axis (m)
       dZ=msg.dz, # displacement along the down axis (m)
       dPsi=msg.dyaw # rotation of heading (rad)
-      ) >> FlyingStateChanged(state="hovering", _timeout=1)
-    ).wait().success()
+      ) 
+    )
 
 
   def _moveTo_callback(self, msg : MoveToCommand) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.moveTo
+
+    moveto_str = "Move to (latitude, longitude, altitude) (" + str(msg.latitude) + ", " + str(msg.longitude) + ", " + str(msg.altitude) + ")"
+    rospy.logwarn(moveto_str)
+
     self.drone(moveTo( 
       latitude=msg.latitude, # latitude (degrees)
       longitude=msg.longitude, # longitude (degrees)
       altitude=msg.altitude, # altitude (m)
       heading=msg.heading, # heading relative to the North (degrees)
       orientation_mode=msg.orientation_mode # {TO_TARGET = 1, HEADING_START = 2, HEADING_DURING = 3} 
-      ) >> FlyingStateChanged(state="hovering", _timeout=5)
-    ).wait().success()
+      )
+    )
 
 
   def _move_to_ned_pos_cb(self, msg : PointStamped) -> None:
@@ -552,8 +560,8 @@ class Anafi(threading.Thread):
       altitude=a, # altitude (m)
       heading=0, # heading relative to the North (degrees)
       orientation_mode=3 # {TO_TARGET = 1, HEADING_START = 2, HEADING_DURING = 3} 
-      ) >> FlyingStateChanged(state="hovering", _timeout=5)
-    ).wait().success()
+      ) 
+    )
 
 
   def _camera_callback(self, msg) -> None:
@@ -806,7 +814,7 @@ class EveryEventListener(olympe.EventListener):
     # 		12 = max camera down, 13 = max camera up, 14 = min zoom, 15 = max zoom
     if event.args["event"] == button_event.press:
       if event.args["button"] == 0: # RTL
-        self.anafi.drone(Emergency()).wait()
+        self.anafi.drone(Emergency())
         rospy.logfatal("Emergency!!!")
         return
       if event.args["button"] == 2: # left back button
