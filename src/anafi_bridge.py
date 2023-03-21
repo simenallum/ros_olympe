@@ -33,6 +33,8 @@ from olympe.messages.skyctrl.CoPiloting import setPilotingSource
 from olympe.messages import gimbal, camera, mapper
 from olympe.enums.mapper import button_event
 
+from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
+
 from dynamic_reconfigure.server import Server
 from olympe_bridge.cfg import setAnafiConfig
 # from olympe_bridge.msg import AttitudeCommand, CameraCommand, MoveByCommand, MoveToCommand, SkyControllerCommand, Float32Stamped
@@ -98,7 +100,14 @@ class Anafi(threading.Thread):
     rospy.Subscriber("/anafi/cmd_moveto", MoveToCommand, self._moveTo_callback)
     rospy.Subscriber("/anafi/cmd_moveby", MoveByCommand, self._moveBy_callback)
     rospy.Subscriber("/anafi/cmd_camera", CameraCommand, self._camera_callback)
-    rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self._move_to_ned_pos_cb)		
+    rospy.Subscriber("/anafi/cmd_moveto_ned_position", PointStamped, self._move_to_ned_pos_cb)
+
+    # Prefer service for land / takeoff, as topics will likely be duplicated when interfacing with ROS2
+    # Topics risks sending the takeoff / land commands multiple times, resulting in the drone oscillating
+    # between landings and takeoffs...
+    # The topics are left, in case they could be useful. The reader should beware before use, though
+    rospy.Service("/anafi/request_takeoff", Trigger, self._request_takeoff_cb)
+    rospy.Service("/anafi/request_land", Trigger, self._request_land_cb)		
 
     if self.is_qualisys_available:
       rospy.Subscriber("/qualisys/Anafi/pose_downsampled", PoseStamped, self.qualisys_callback)
@@ -422,16 +431,34 @@ class Anafi(threading.Thread):
       rospy.logwarn("Packet lost!")
 
 
+  def _request_takeoff_cb(self, request : TriggerRequest) -> TriggerResponse:
+    # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
+    rospy.logwarn("Takeoff requested")
+    self.drone(TakeOff()) 
+    rospy.logwarn("Takeoff")
+    return TriggerResponse(True, "")
+
+
+  def _request_land_cb(self, request : TriggerRequest) -> TriggerResponse:
+    # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.Landing		
+    rospy.logwarn("Land requested")
+    self.drone(Landing()) 
+    rospy.logwarn("Land")
+    return TriggerResponse(True, "")
+
+
   def _takeoff_callback(self, msg : Empty) -> None:		
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.TakeOff
-    self.drone(TakeOff() >> FlyingStateChanged(state="hovering", _timeout=10)).wait() 
+    rospy.logwarn("Takeoff command received")
+    self.drone(TakeOff()) # Drop wait. Better to send a new message instead of blocking the thread
     rospy.logwarn("Takeoff")
 
 
   def _land_callback(self, msg : Empty) -> None:
     # https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html#olympe.messages.ardrone3.Piloting.Landing		
-    self.drone(Landing()).wait() 
-    rospy.loginfo("Land")
+    rospy.logwarn("Land command received")
+    self.drone(Landing()) # Drop wait. Better to send a new message instead of blocking the thread
+    rospy.logwarn("Land")
 
 
   def _emergency_callback(self, msg) -> None:
