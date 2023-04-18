@@ -305,14 +305,6 @@ class Anafi(threading.Thread):
 
             status.status = 0 	# Position fix
 
-          else:
-            # No connection - setting to zero to make it explicit
-            msg_location.latitude = 0   # [deg]
-            msg_location.longitude = 0  # [deg]
-            msg_location.altitude = 0   # [m] over WGS84
-
-            status.status = -1	# No position fix
-
         elif self.is_qualisys_available:
           msg_location.header = header
           msg_location.header.frame_id = 'world'
@@ -321,6 +313,14 @@ class Anafi(threading.Thread):
           msg_location.altitude = self.last_received_location.altitude
 
           status.status = 0	# Position fix
+
+        else:
+          # No connection - setting to zero to make it explicit
+          msg_location.latitude = 0   # [deg]
+          msg_location.longitude = 0  # [deg]
+          msg_location.altitude = 0   # [m] over WGS84
+
+          status.status = -1	# No position fix
 
         if status.status == 0:
 
@@ -341,11 +341,17 @@ class Anafi(threading.Thread):
         msg_location.status = status
         self.pub_gnss_location.publish(msg_location)
 
-        ground_distance = drone_data['ground_distance'] # barometer (m)
-        height_msg = Float32Stamped()
-        height_msg.header = header
-        height_msg.data = ground_distance
-        self.pub_height.publish(height_msg)
+        state = drone_data['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
+        self.pub_state.publish(state)
+
+        ground_distance = drone_data['ground_distance'] # barometer (m) 
+
+        if state not in ["FS_LANDED", "FS_MOTOR_RAMPING", "FS_TAKINGOFF"]: # -> Reads wrong data during these states
+          height_msg = Float32Stamped()
+          height_msg.header = header
+          height_msg.data = ground_distance
+            
+          self.pub_height.publish(height_msg)
 
         of_speed = drone_data['speed'] # opticalflow speed (m/s)
         rotation_matrix_body_to_vehicle = rot_corrected_body_to_vehicle.as_matrix()   
@@ -387,9 +393,6 @@ class Anafi(threading.Thread):
         battery_percentage_msg = Float64() # Using Int8 or UInt8 causes confusion with char over the ROS1 - ROS2 bridge
         battery_percentage_msg.data = battery_percentage
         self.pub_battery.publish(battery_percentage_msg)
-
-        state = drone_data['flying_state'] # ['LANDED', 'MOTOR_RAMPING', 'TAKINGOFF', 'HOVERING', 'FLYING', 'LANDING', 'EMERGENCY']
-        self.pub_state.publish(state)
 
         # Log battery percentage
         if battery_percentage >= 30:
@@ -637,7 +640,7 @@ class Anafi(threading.Thread):
     y = msg.pose.position.y
     z = msg.pose.position.z
 
-    noise = np.random.normal(0, 0.4, 3) # Zero mean, 0.4 std. dev gaussian noise
+    noise = np.random.normal(0, 0.2, 3) # Zero mean, 0.2 std. dev gaussian noise
 
     x += noise[0]
     y += noise[1]
@@ -861,11 +864,11 @@ class EveryEventListener(olympe.EventListener):
 
 
 if __name__ == '__main__':
-	rospy.init_node('anafi_bridge', anonymous = False)
-	rospy.loginfo("AnafiBridge is running...")
-	anafi = Anafi()	
-	try:
-		anafi.run()
-	except rospy.ROSInterruptException:
-		traceback.print_exc()
-		pass
+  rospy.init_node('anafi_bridge', anonymous = False)
+  rospy.loginfo("AnafiBridge is running...")
+  anafi = Anafi()	
+  try:
+    anafi.run()
+  except rospy.ROSInterruptException:
+    traceback.print_exc()
+    pass
