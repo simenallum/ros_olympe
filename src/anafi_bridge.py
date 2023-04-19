@@ -92,6 +92,7 @@ class Anafi(threading.Thread):
     self.pub_polled_velocities = rospy.Publisher("/anafi/polled_body_velocities", TwistStamped, queue_size=1)
     self.pub_msg_latency = rospy.Publisher("/anafi/msg_latency", Float64, queue_size=1)
     self.pub_ned_pos_from_gnss = rospy.Publisher("/anafi/ned_pos_from_gnss", PointStamped, queue_size=1)
+    self.pub_ned_frame_gnss_origin = rospy.Publisher("/anafi/ned_frame_gnss_origin", Vector3Stamped, queue_size=1)
 
     rospy.Subscriber("/anafi/cmd_takeoff", Empty, self._takeoff_callback)
     rospy.Subscriber("/anafi/cmd_land", Empty, self._land_callback)
@@ -337,6 +338,14 @@ class Anafi(threading.Thread):
           msg_ned_pos_from_gnss.point.z = d 
 
           self.pub_ned_pos_from_gnss.publish(msg_ned_pos_from_gnss)
+          
+          # Publish the origin for the GNSS frame. Needed in some other nodes for debugging.
+          msg_ned_frame_gnss_origin = Vector3Stamped()
+          msg_ned_frame_gnss_origin.header = header
+          msg_ned_frame_gnss_origin.vector.x = self.ned_origo_in_lla[0]
+          msg_ned_frame_gnss_origin.vector.y = self.ned_origo_in_lla[1]
+          msg_ned_frame_gnss_origin.vector.z = self.ned_origo_in_lla[2]
+          self.pub_ned_frame_gnss_origin.publish(msg_ned_frame_gnss_origin)
 
         msg_location.status = status
         self.pub_gnss_location.publish(msg_location)
