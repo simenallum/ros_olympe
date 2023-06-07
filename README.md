@@ -5,7 +5,7 @@ Supports Parrot Anafi FPV drones
 ## Overview
 
 **Original author:** Andriy Sarabakha, andriy.sarabakha@ntu.edu.sg<br />
-**Updated by:** Simen Stensrød Allum and Øystein Solbø
+**Updated by:** [Simen Stensrød Allum](https://github.com/simenallum) and [Øystein Solbø](https://github.com/oyssolbo)
 
 ## Installation
 
