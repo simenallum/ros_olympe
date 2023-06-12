@@ -119,7 +119,8 @@ class Anafi(threading.Thread):
     self.drone = olympe.Drone(self.drone_ip)
     
     # Create listener for RC events
-    self.every_event_listener = EveryEventListener(self.drone)
+    self.every_event_listener = EveryEventListener(self.drone, self)
+    self.every_event_listener.subscribe()
 
     rospy.on_shutdown(self._stop)
     
@@ -649,7 +650,7 @@ class Anafi(threading.Thread):
     y = msg.pose.position.y
     z = msg.pose.position.z
 
-    noise = np.random.normal(0, 0.2, 3) # Zero mean, 0.2 std. dev gaussian noise
+    noise = np.random.normal(0, 0.05, 3) # Zero mean, 0.05 std. dev gaussian noise
 
     x += noise[0]
     y += noise[1]
@@ -684,7 +685,8 @@ class Anafi(threading.Thread):
 
     if self.ned_origo_in_lla is None:
       if self.is_qualisys_available:
-        self.ned_origo_in_lla = GNSS_ORIGIN_DRONE_LAB
+        self.ned_origo_in_lla = (lat, lon, a) # This has to be commented out for testing platform tracker
+        # self.ned_origo_in_lla = GNSS_ORIGIN_DRONE_LAB # This has to be commented out for testing pix2geo
       else:
         self.ned_origo_in_lla = (lat, lon, a)
 
@@ -809,12 +811,13 @@ class Anafi(threading.Thread):
 
 
 class EveryEventListener(olympe.EventListener):
-  def __init__(self, anafi):
+  def __init__(self, drone, anafi):
+    self.drone = drone
     self.anafi = anafi
         
     self.msg_rpyt = SkyControllerCommand()
     
-    super().__init__(anafi)
+    super().__init__(drone)
 
 
   def print_event(self, event): # Serializes an event object and truncates the result if necessary before printing it
@@ -828,19 +831,15 @@ class EveryEventListener(olympe.EventListener):
 
 
   # RC buttons listener     
-  @olympe.listen_event(mapper.grab_button_event()) 
+  @olympe.listen_event(mapper.grab_button_event(_policy="wait")) 
   # https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_button_event
   def on_grab_button_event(self, event, scheduler):
-    self.print_event(event)
+    # self.print_event(event)
     # button: 	0 = RTL, 1 = takeoff/land, 2 = back left, 3 = back right
     # axis_button:	4 = max CCW yaw, 5 = max CW yaw, 6 = max trottle, 7 = min trottle
     # 		8 = min roll, 9 = max roll, 10 = min pitch, 11 = max pitch
     # 		12 = max camera down, 13 = max camera up, 14 = min zoom, 15 = max zoom
     if event.args["event"] == button_event.press:
-      if event.args["button"] == 0: # RTL
-        self.anafi.drone(Emergency())
-        rospy.logfatal("Emergency!!!")
-        return
       if event.args["button"] == 2: # left back button
         self.anafi._switch_to_manual_control()
         return
@@ -851,7 +850,7 @@ class EveryEventListener(olympe.EventListener):
 
 
   # RC axis listener
-  @olympe.listen_event(mapper.grab_axis_event()) 
+  @olympe.listen_event(mapper.grab_axis_event(_policy="wait")) 
   # https://developer.parrot.com/docs/olympe/arsdkng_mapper.html#olympe.messages.mapper.grab_axis_event
   def on_grab_axis_event(self, event, scheduler):	
     # axis: 	0 = yaw, 1 = z, 2 = y, 3 = x, 4 = camera, 5 = zoom
